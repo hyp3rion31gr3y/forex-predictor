@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forex Signal Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <!-- Disclaimer banner -->
+    <div id="disclaimer-banner">
+        <span>Educational tool only &mdash; not financial advice. Past performance does not guarantee future results.</span>
+        <button id="dismiss-disclaimer" onclick="this.parentElement.style.display='none'">&times;</button>
+    </div>
+
+    <div id="app">
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h1>FX Signals</h1>
+                <button id="sidebar-toggle" class="mobile-only" aria-label="Toggle sidebar">&equiv;</button>
+            </div>
+            <div id="pair-list"></div>
+            <div class="period-selector sidebar-section">
+                <h3>Period</h3>
+                <div class="btn-group" id="period-buttons">
+                    <button data-period="1mo">1M</button>
+                    <button data-period="3mo">3M</button>
+                    <button data-period="6mo" class="active">6M</button>
+                    <button data-period="1y">1Y</button>
+                </div>
+            </div>
+            <div class="interval-selector sidebar-section">
+                <h3>Interval</h3>
+                <div class="btn-group" id="interval-buttons">
+                    <button data-interval="1m">1m</button>
+                    <button data-interval="5m">5m</button>
+                    <button data-interval="15m">15m</button>
+                    <button data-interval="30m">30m</button>
+                    <button data-interval="1h">1h</button>
+                    <button data-interval="1d" class="active">1D</button>
+                </div>
+            </div>
+            <div class="overlay-toggles sidebar-section">
+                <h3>Overlays</h3>
+                <label><input type="checkbox" id="ovl-sma" checked> SMA (20/50/200)</label>
+                <label><input type="checkbox" id="ovl-ema"> EMA (12/26)</label>
+                <label><input type="checkbox" id="ovl-ema-fast"> EMA (9/21)</label>
+                <label><input type="checkbox" id="ovl-vwap"> VWAP</label>
+                <label><input type="checkbox" id="ovl-bb"> Bollinger Bands</label>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main id="main-content">
+            <!-- Price header -->
+            <div id="price-header">
+                <div>
+                    <span id="pair-name" class="pair-name">USD/INR</span>
+                    <span id="last-price" class="last-price">--</span>
+                    <span id="price-change" class="price-change">--</span>
+                </div>
+                <div id="overall-signal-badge" class="signal-badge neutral">Loading...</div>
+            </div>
+
+            <!-- Chart area -->
+            <div id="chart-container">
+                <div id="main-chart"></div>
+            </div>
+
+            <!-- Sub-charts: RSI and MACD -->
+            <div id="sub-charts">
+                <div class="sub-chart-wrapper">
+                    <div class="sub-chart-label">RSI (14)</div>
+                    <div id="rsi-chart" class="sub-chart"></div>
+                </div>
+                <div class="sub-chart-wrapper">
+                    <div class="sub-chart-label">MACD (12,26,9)</div>
+                    <div id="macd-chart" class="sub-chart"></div>
+                </div>
+            </div>
+
+            <!-- Overall signal gauge -->
+            <div id="gauge-section">
+                <h2>Overall Signal</h2>
+                <div id="gauge-container">
+                    <div class="gauge-bar">
+                        <div class="gauge-segment strong-sell">Strong Sell</div>
+                        <div class="gauge-segment sell">Sell</div>
+                        <div class="gauge-segment neutral">Neutral</div>
+                        <div class="gauge-segment buy">Buy</div>
+                        <div class="gauge-segment strong-buy">Strong Buy</div>
+                    </div>
+                    <div id="gauge-needle"></div>
+                    <div id="gauge-score"></div>
+                </div>
+            </div>
+
+            <!-- Verdict panel -->
+            <div id="verdict-section">
+                <h2>Verdict</h2>
+                <div id="verdict-card">
+                    <div id="verdict-arrow"></div>
+                    <div id="verdict-summary"></div>
+                    <div id="verdict-confidence">
+                        <div id="confidence-label"></div>
+                        <div id="confidence-bar-track">
+                            <div id="confidence-bar-fill"></div>
+                        </div>
+                    </div>
+                    <div id="verdict-votes"></div>
+                    <div id="verdict-meta">
+                        <span id="meta-confluence" class="meta-chip"></span>
+                        <span id="meta-regime" class="meta-chip"></span>
+                        <span id="meta-volatility" class="meta-chip"></span>
+                        <span id="meta-whipsaw" class="meta-chip" style="display:none"></span>
+                        <span id="meta-sr" class="meta-chip" style="display:none"></span>
+                        <span id="meta-mtf" class="meta-chip" style="display:none"></span>
+                    </div>
+                    <div id="signal-quality">
+                        <div id="quality-label"></div>
+                        <div id="quality-bar-track">
+                            <div id="quality-bar-fill"></div>
+                        </div>
+                    </div>
+                    <div id="verdict-disclaimer">Based on historical indicators only. Not a prediction.</div>
+                </div>
+            </div>
+
+            <!-- Signal table -->
+            <div id="signal-section">
+                <h2>Indicator Signals</h2>
+                <table id="signal-table">
+                    <thead>
+                        <tr>
+                            <th>Indicator</th>
+                            <th>Bet</th>
+                            <th>Value</th>
+                            <th>Signal</th>
+                            <th>Score</th>
+                            <th>Explanation</th>
+                        </tr>
+                    </thead>
+                    <tbody id="signal-tbody"></tbody>
+                </table>
+            </div>
+
+            <!-- Loading overlay -->
+            <div id="loading-overlay">
+                <div class="spinner"></div>
+                <p>Fetching data...</p>
+            </div>
+
+            <!-- Error message -->
+            <div id="error-message" style="display:none;">
+                <p id="error-text"></p>
+                <button onclick="location.reload()">Retry</button>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
