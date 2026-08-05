@@ -1341,19 +1341,14 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
             else:
                 stop_loss = round(entry_price + 1.5 * atr_val, 5) if atr_val > 0 else None
 
-        # TP: min 2:1 R:R, capped at 3:1
+        # TP: 2:1 R:R
         if stop_loss is not None:
             risk = abs(entry_price - stop_loss)
             if risk > 0:
                 if direction == "BUY":
-                    take_profit = round(entry_price + risk * 2.5, 5)
-                    # Cap at 3:1
-                    max_tp = entry_price + risk * 3.0
-                    take_profit = round(min(take_profit, max_tp), 5)
+                    take_profit = round(entry_price + risk * 2.0, 5)
                 else:
-                    take_profit = round(entry_price - risk * 2.5, 5)
-                    max_tp = entry_price - risk * 3.0
-                    take_profit = round(max(take_profit, max_tp), 5)
+                    take_profit = round(entry_price - risk * 2.0, 5)
                 risk_reward = round(abs(take_profit - entry_price) / risk, 2)
 
     # 8. Build zones for chart (top 5)
