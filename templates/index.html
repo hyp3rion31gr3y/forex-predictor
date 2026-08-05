@@ -49,6 +49,14 @@
                 <label><input type="checkbox" id="ovl-vwap"> VWAP</label>
                 <label><input type="checkbox" id="ovl-smc"> SMC Zones</label>
             </div>
+            <div class="sidebar-section">
+                <h3>Auto Refresh</h3>
+                <label class="toggle-label">
+                    <span>Live</span>
+                    <input type="checkbox" id="live-toggle">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
         </aside>
 
         <!-- Main content -->
@@ -59,6 +67,7 @@
                     <span id="pair-name" class="pair-name">USD/INR</span>
                     <span id="last-price" class="last-price">--</span>
                     <span id="price-change" class="price-change">--</span>
+                    <span id="live-badge" style="display:none"><span class="live-dot"></span>LIVE</span>
                 </div>
                 <div id="overall-signal-badge" class="signal-badge neutral">Loading...</div>
             </div>
@@ -200,6 +209,7 @@
                 <p id="error-text"></p>
                 <button onclick="location.reload()">Retry</button>
             </div>
+            <div id="live-error-toast" style="display:none">Live data temporarily unavailable. Retrying...</div>
         </main>
     </div>
 

@@ -11,6 +11,19 @@ let macdSignalSeries = null;
 let macdHistSeries = null;
 let entryPriceLines = {};
 
+// ===== Live Refresh State =====
+let liveRefreshEnabled = false;
+let liveRefreshTimer = null;
+let lastChartTimestamp = null;
+let consecutiveErrors = 0;
+let isLiveRefreshing = false;
+let liveToastTimer = null;
+
+const POLL_INTERVALS = {
+    "1m": 10000, "5m": 15000, "15m": 30000,
+    "30m": 45000, "1h": 60000, "1d": 120000,
+};
+
 // Interval -> allowed periods + default period
 const INTERVAL_PERIODS = {
     "1m":  { periods: ["1d", "5d"],                   default: "5d"  },
@@ -135,6 +148,16 @@ function setupEventListeners() {
         });
     }
 
+    // Live toggle
+    document.getElementById("live-toggle").addEventListener("change", (e) => {
+        liveRefreshEnabled = e.target.checked;
+        if (liveRefreshEnabled) {
+            startLiveRefresh();
+        } else {
+            stopLiveRefresh();
+        }
+    });
+
     // Window resize
     window.addEventListener("resize", () => {
         if (mainChart) mainChart.applyOptions({ width: document.getElementById("main-chart").clientWidth });
@@ -144,6 +167,7 @@ function setupEventListeners() {
 
 // ===== Select pair =====
 function selectPair(pair) {
+    stopLiveRefresh();
     currentPair = pair;
     document.querySelectorAll(".pair-btn").forEach((b) => {
         b.classList.toggle("active", b.textContent === pair);
@@ -155,6 +179,8 @@ function selectPair(pair) {
 
 // ===== Fetch analysis from API =====
 async function fetchAnalysis(pair, period, interval) {
+    stopLiveRefresh();
+
     const loading = document.getElementById("loading-overlay");
     const errorDiv = document.getElementById("error-message");
     loading.classList.add("visible");
@@ -169,6 +195,9 @@ async function fetchAnalysis(pair, period, interval) {
         }
         const data = await resp.json();
         renderAll(data);
+        if (liveRefreshEnabled) {
+            startLiveRefresh();
+        }
     } catch (e) {
         console.error(e);
         document.getElementById("error-text").textContent = e.message;
@@ -234,6 +263,7 @@ function renderCandlestickChart(data) {
     applyOverlays();
 
     mainChart.timeScale().fitContent();
+    lastChartTimestamp = data.chart.length > 0 ? data.chart[data.chart.length - 1].time : null;
 }
 
 // ===== Apply overlays based on checkbox state =====
@@ -728,4 +758,180 @@ function signalToClass(signal) {
         "no-data": "neutral",
     };
     return map[s] || "neutral";
+}
+
+// ===== Live Refresh =====
+
+function startLiveRefresh() {
+    stopLiveRefresh();
+    const rate = POLL_INTERVALS[currentInterval] || 60000;
+    const badge = document.getElementById("live-badge");
+    badge.style.display = "";
+    liveRefreshTimer = setInterval(liveRefreshTick, rate);
+}
+
+function stopLiveRefresh() {
+    if (liveRefreshTimer) {
+        clearInterval(liveRefreshTimer);
+        liveRefreshTimer = null;
+    }
+    consecutiveErrors = 0;
+    isLiveRefreshing = false;
+    const badge = document.getElementById("live-badge");
+    if (badge) badge.style.display = "none";
+    hideLiveErrorToast();
+}
+
+async function liveRefreshTick() {
+    if (isLiveRefreshing) return;
+    isLiveRefreshing = true;
+
+    const badge = document.getElementById("live-badge");
+    badge.classList.add("fetching");
+
+    const urlPair = currentPair.replace("/", "-");
+    try {
+        const resp = await fetch(`/api/analyze/${urlPair}?period=${currentPeriod}&interval=${currentInterval}`);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const data = await resp.json();
+        consecutiveErrors = 0;
+        hideLiveErrorToast();
+        incrementalUpdate(data);
+    } catch (e) {
+        console.error("Live refresh error:", e);
+        consecutiveErrors++;
+        if (consecutiveErrors >= 3) {
+            showLiveErrorToast();
+        }
+    } finally {
+        badge.classList.remove("fetching");
+        isLiveRefreshing = false;
+    }
+}
+
+function incrementalUpdate(data) {
+    renderPriceHeader(data);
+    incrementalChartUpdate(data);
+    incrementalMACDUpdate(data);
+    renderOverallGauge(data.overall);
+    renderVerdict(data.overall, data.mtf, data.smc);
+    renderEntryTiming(data.entry, data.overall);
+    renderSignalTable(data.signals);
+
+    window._overlayData = data.overlays;
+    window._smcData = data.smc || null;
+}
+
+function incrementalChartUpdate(data) {
+    if (!mainChart || !candleSeries) {
+        renderCandlestickChart(data);
+        return;
+    }
+
+    const newBars = data.chart;
+    if (!newBars || newBars.length === 0) return;
+
+    const newLastBar = newBars[newBars.length - 1];
+
+    if (lastChartTimestamp === null) {
+        // No previous timestamp, do full replacement
+        candleSeries.setData(newBars);
+    } else if (newLastBar.time === lastChartTimestamp) {
+        // Same candle — update in place
+        candleSeries.update(newLastBar);
+    } else if (newBars.length >= 2 && newBars[newBars.length - 2].time === lastChartTimestamp) {
+        // One new bar appended — update the previous bar (it may have closed differently) and append the new one
+        candleSeries.update(newBars[newBars.length - 2]);
+        candleSeries.update(newLastBar);
+    } else {
+        // Multiple new bars or gap — full replacement
+        candleSeries.setData(newBars);
+    }
+
+    lastChartTimestamp = newLastBar.time;
+
+    // Update overlay line series with latest points
+    const od = data.overlays;
+    if (od) {
+        const overlayKeys = {
+            ema9: "ema9", ema12: "ema12", ema21: "ema21", ema26: "ema26", vwap: "vwap"
+        };
+        for (const [dataKey, seriesKey] of Object.entries(overlayKeys)) {
+            if (overlaySeries[seriesKey] && od[dataKey] && od[dataKey].length > 0) {
+                const lastPoint = od[dataKey][od[dataKey].length - 1];
+                overlaySeries[seriesKey].update(lastPoint);
+                // Also update second-to-last if available (closed bar update)
+                if (od[dataKey].length >= 2) {
+                    overlaySeries[seriesKey].update(od[dataKey][od[dataKey].length - 2]);
+                }
+            }
+        }
+    }
+
+    // Reapply SMC overlays if checkbox is checked (static zones, lightweight)
+    if (document.getElementById("ovl-smc").checked) {
+        applyOverlays();
+    }
+}
+
+function incrementalMACDUpdate(data) {
+    if (!macdChart || !macdLineSeries) {
+        renderMACDChart(data);
+        return;
+    }
+
+    // Update MACD line
+    if (data.macd && data.macd.length > 0) {
+        const last = data.macd[data.macd.length - 1];
+        macdLineSeries.update(last);
+        if (data.macd.length >= 2) {
+            macdLineSeries.update(data.macd[data.macd.length - 2]);
+        }
+    }
+
+    // Update signal line
+    if (data.macd_signal && data.macd_signal.length > 0) {
+        const last = data.macd_signal[data.macd_signal.length - 1];
+        macdSignalSeries.update(last);
+        if (data.macd_signal.length >= 2) {
+            macdSignalSeries.update(data.macd_signal[data.macd_signal.length - 2]);
+        }
+    }
+
+    // Update histogram
+    if (macdHistSeries && data.macd_hist && data.macd_hist.length > 0) {
+        const lastH = data.macd_hist[data.macd_hist.length - 1];
+        macdHistSeries.update({
+            time: lastH.time,
+            value: lastH.value,
+            color: lastH.value >= 0 ? "#4caf5088" : "#ef535088",
+        });
+        if (data.macd_hist.length >= 2) {
+            const prevH = data.macd_hist[data.macd_hist.length - 2];
+            macdHistSeries.update({
+                time: prevH.time,
+                value: prevH.value,
+                color: prevH.value >= 0 ? "#4caf5088" : "#ef535088",
+            });
+        }
+    }
+}
+
+function showLiveErrorToast() {
+    const toast = document.getElementById("live-error-toast");
+    toast.style.display = "";
+    if (liveToastTimer) clearTimeout(liveToastTimer);
+    liveToastTimer = setTimeout(() => {
+        toast.style.display = "none";
+        liveToastTimer = null;
+    }, 5000);
+}
+
+function hideLiveErrorToast() {
+    const toast = document.getElementById("live-error-toast");
+    if (toast) toast.style.display = "none";
+    if (liveToastTimer) {
+        clearTimeout(liveToastTimer);
+        liveToastTimer = null;
+    }
 }
