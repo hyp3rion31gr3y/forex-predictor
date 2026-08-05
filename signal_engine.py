@@ -1341,14 +1341,64 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
             else:
                 stop_loss = round(entry_price + 1.5 * atr_val, 5) if atr_val > 0 else None
 
-        # TP: 2:1 R:R
+        # TP: 1st — nearest liquidity / POI in trade direction
+        #     2nd — fallback to 2x risk distance
         if stop_loss is not None:
             risk = abs(entry_price - stop_loss)
             if risk > 0:
+                # Collect liquidity levels & POIs in the trade direction
+                tp_candidates = []
+
                 if direction == "BUY":
-                    take_profit = round(entry_price + risk * 2.0, 5)
+                    # Buy-side liquidity: swing highs above entry
+                    for _, sh_price in swings["swing_highs"]:
+                        if sh_price > entry_price + risk * 0.5:
+                            tp_candidates.append(sh_price)
+                    # Bearish OBs / FVGs above entry as resistance POIs
+                    for ob in smc_data.get("order_blocks", []):
+                        if ob["type"] == "bearish" and ob["bottom"] > entry_price:
+                            tp_candidates.append(ob["bottom"])
+                    for fvg in smc_data.get("fvg", []):
+                        if not fvg["filled"] and fvg["type"] == "bearish" and fvg["bottom"] > entry_price:
+                            tp_candidates.append(fvg["bottom"])
                 else:
-                    take_profit = round(entry_price - risk * 2.0, 5)
+                    # Sell-side liquidity: swing lows below entry
+                    for _, sl_price in swings["swing_lows"]:
+                        if sl_price < entry_price - risk * 0.5:
+                            tp_candidates.append(sl_price)
+                    # Bullish OBs / FVGs below entry as support POIs
+                    for ob in smc_data.get("order_blocks", []):
+                        if ob["type"] == "bullish" and ob["top"] < entry_price:
+                            tp_candidates.append(ob["top"])
+                    for fvg in smc_data.get("fvg", []):
+                        if not fvg["filled"] and fvg["type"] == "bullish" and fvg["top"] < entry_price:
+                            tp_candidates.append(fvg["top"])
+
+                # Pick nearest candidate with at least 1:1 R:R
+                liq_tp = None
+                if tp_candidates:
+                    if direction == "BUY":
+                        tp_candidates.sort()
+                        for c in tp_candidates:
+                            if abs(c - entry_price) >= risk:
+                                liq_tp = c
+                                break
+                    else:
+                        tp_candidates.sort(reverse=True)
+                        for c in tp_candidates:
+                            if abs(entry_price - c) >= risk:
+                                liq_tp = c
+                                break
+
+                if liq_tp is not None:
+                    take_profit = round(liq_tp, 5)
+                else:
+                    # Fallback: 2x risk distance
+                    if direction == "BUY":
+                        take_profit = round(entry_price + risk * 2.0, 5)
+                    else:
+                        take_profit = round(entry_price - risk * 2.0, 5)
+
                 risk_reward = round(abs(take_profit - entry_price) / risk, 2)
 
     # 8. Build zones for chart (top 5)
