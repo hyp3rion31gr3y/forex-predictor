@@ -30,9 +30,6 @@ def compute_indicators(df: pd.DataFrame, interval: str = "1d") -> pd.DataFrame:
     high = df["High"]
     low = df["Low"]
 
-    # RSI — window 14 for both (well-established)
-    _try_indicator(df, "RSI", lambda: ta.momentum.RSIIndicator(close, window=14).rsi())
-
     # MACD — faster (8,17,9) for intraday; standard (12,26,9) for daily
     try:
         mf, ms, msig = (8, 17, 9) if _intra else (12, 26, 9)
@@ -43,35 +40,11 @@ def compute_indicators(df: pd.DataFrame, interval: str = "1d") -> pd.DataFrame:
     except Exception:
         df["MACD"] = df["MACD_Signal"] = df["MACD_Hist"] = float("nan")
 
-    # SMAs — keep same windows; signal function skips SMA_200 for intraday
-    _try_indicator(df, "SMA_20", lambda: ta.trend.SMAIndicator(close, window=20).sma_indicator())
-    _try_indicator(df, "SMA_50", lambda: ta.trend.SMAIndicator(close, window=50).sma_indicator())
-    _try_indicator(df, "SMA_200", lambda: ta.trend.SMAIndicator(close, window=200).sma_indicator())
-
     # EMAs
     _try_indicator(df, "EMA_12", lambda: ta.trend.EMAIndicator(close, window=12).ema_indicator())
     _try_indicator(df, "EMA_26", lambda: ta.trend.EMAIndicator(close, window=26).ema_indicator())
     _try_indicator(df, "EMA_9", lambda: ta.trend.EMAIndicator(close, window=9).ema_indicator())
     _try_indicator(df, "EMA_21", lambda: ta.trend.EMAIndicator(close, window=21).ema_indicator())
-
-    # Bollinger Bands — tighter window=10 for intraday
-    try:
-        bb_win = 10 if _intra else 20
-        bb = ta.volatility.BollingerBands(close, window=bb_win, window_dev=2)
-        df["BB_Upper"] = bb.bollinger_hband()
-        df["BB_Middle"] = bb.bollinger_mavg()
-        df["BB_Lower"] = bb.bollinger_lband()
-    except Exception:
-        df["BB_Upper"] = df["BB_Middle"] = df["BB_Lower"] = float("nan")
-
-    # Stochastic — faster (5,3) for intraday; standard (14,3) for daily
-    try:
-        stoch_win = 5 if _intra else 14
-        stoch = ta.momentum.StochasticOscillator(high, low, close, window=stoch_win, smooth_window=3)
-        df["Stoch_K"] = stoch.stoch()
-        df["Stoch_D"] = stoch.stoch_signal()
-    except Exception:
-        df["Stoch_K"] = df["Stoch_D"] = float("nan")
 
     # ADX — shorter window=10 for intraday
     try:
@@ -92,10 +65,6 @@ def compute_indicators(df: pd.DataFrame, interval: str = "1d") -> pd.DataFrame:
 
     if has_volume:
         volume = df["Volume"]
-        # MFI (14) — Money Flow Index
-        _try_indicator(df, "MFI", lambda: ta.volume.MFIIndicator(high, low, close, volume, window=14).money_flow_index())
-        # OBV — On-Balance Volume
-        _try_indicator(df, "OBV", lambda: ta.volume.OnBalanceVolumeIndicator(close, volume).on_balance_volume())
         # VWAP — Volume Weighted Average Price (daily reset)
         try:
             typical_price = (high + low + close) / 3
@@ -105,20 +74,6 @@ def compute_indicators(df: pd.DataFrame, interval: str = "1d") -> pd.DataFrame:
             df["VWAP"] = cum_tp_vol / cum_vol.replace(0, float("nan"))
         except Exception:
             df["VWAP"] = float("nan")
-
-    # Parabolic SAR — smaller step for intraday to reduce whipsaws
-    try:
-        psar_step = 0.01 if _intra else 0.02
-        psar = ta.trend.PSARIndicator(high, low, close, step=psar_step, max_step=0.2)
-        df["PSAR"] = psar.psar()
-        df["PSAR_Up"] = psar.psar_up()
-        df["PSAR_Down"] = psar.psar_down()
-    except Exception:
-        df["PSAR"] = df["PSAR_Up"] = df["PSAR_Down"] = float("nan")
-
-    # CCI — shorter window=10 for intraday
-    cci_win = 10 if _intra else 20
-    _try_indicator(df, "CCI", lambda: ta.trend.CCIIndicator(high, low, close, window=cci_win).cci())
 
     return df
 
@@ -136,67 +91,6 @@ def _safe(val: Any) -> bool:
     except (TypeError, ValueError):
         return False
 
-
-# --- Change 3: RSI with trend-context suppression ---
-def _rsi_signal(df: pd.DataFrame, is_intraday: bool = False) -> Optional[dict]:
-    val = df["RSI"].iloc[-1]
-    if not _safe(val):
-        return None
-    val = round(float(val), 2)
-
-    # Tighter thresholds for intraday (RSI rarely hits 30/70 on short bars)
-    if is_intraday:
-        if val < 25:
-            score, label, expl = 2, "Strong Buy", f"RSI {val} — deeply oversold"
-        elif val < 35:
-            score, label, expl = 1, "Buy", f"RSI {val} — oversold"
-        elif val > 75:
-            score, label, expl = -2, "Strong Sell", f"RSI {val} — deeply overbought"
-        elif val > 65:
-            score, label, expl = -1, "Sell", f"RSI {val} — overbought"
-        elif val > 55:
-            score, label, expl = -0.5, "Slightly Bearish", f"RSI {val} — leaning overbought"
-        elif val < 45:
-            score, label, expl = 0.5, "Slightly Bullish", f"RSI {val} — leaning oversold"
-        else:
-            score, label, expl = 0, "Neutral", f"RSI {val} — neutral zone"
-    else:
-        if val < 20:
-            score, label, expl = 2, "Strong Buy", f"RSI {val} — deeply oversold"
-        elif val < 30:
-            score, label, expl = 1, "Buy", f"RSI {val} — oversold"
-        elif val > 80:
-            score, label, expl = -2, "Strong Sell", f"RSI {val} — deeply overbought"
-        elif val > 70:
-            score, label, expl = -1, "Sell", f"RSI {val} — overbought"
-        elif val > 60:
-            score, label, expl = -0.5, "Slightly Bearish", f"RSI {val} — leaning overbought"
-        elif val < 40:
-            score, label, expl = 0.5, "Slightly Bullish", f"RSI {val} — leaning oversold"
-        else:
-            score, label, expl = 0, "Neutral", f"RSI {val} — neutral zone"
-
-    # Dampen counter-trend RSI signals when ADX > 30 with clear DI direction
-    if "ADX" in df.columns and "ADX_Pos" in df.columns and "ADX_Neg" in df.columns:
-        adx_val = df["ADX"].iloc[-1]
-        plus_di = df["ADX_Pos"].iloc[-1]
-        minus_di = df["ADX_Neg"].iloc[-1]
-        if _safe(adx_val) and _safe(plus_di) and _safe(minus_di):
-            adx_val, plus_di, minus_di = float(adx_val), float(plus_di), float(minus_di)
-            if adx_val > 30:
-                # Strong uptrend: dampen overbought (sell) signals
-                if plus_di > minus_di and score < 0:
-                    score = round(score * 0.3, 2)
-                    expl += " (dampened: strong uptrend per ADX)"
-                    label = "Slightly Bearish" if score < 0 else "Neutral"
-                # Strong downtrend: dampen oversold (buy) signals
-                elif minus_di > plus_di and score > 0:
-                    score = round(score * 0.3, 2)
-                    expl += " (dampened: strong downtrend per ADX)"
-                    label = "Slightly Bullish" if score > 0 else "Neutral"
-
-    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
-    return {"name": "RSI (14)", "value": val, "score": score, "signal": label, "explanation": expl, "bet": bet}
 
 
 def _macd_signal(df: pd.DataFrame, is_intraday: bool = False) -> Optional[dict]:
@@ -241,59 +135,6 @@ def _macd_signal(df: pd.DataFrame, is_intraday: bool = False) -> Optional[dict]:
     return {"name": macd_name, "value": round(macd_val, 5), "score": score, "signal": label, "explanation": expl, "bet": bet}
 
 
-def _sma_signal(df: pd.DataFrame, is_intraday: bool = False) -> Optional[dict]:
-    close = float(df["Close"].iloc[-1])
-    sma20 = df["SMA_20"].iloc[-1]
-    sma50 = df["SMA_50"].iloc[-1]
-
-    # Skip SMA_200 for intraday — it covers only hours, not months
-    sma_list = [("SMA20", sma20), ("SMA50", sma50)]
-    if not is_intraday:
-        sma200 = df["SMA_200"].iloc[-1]
-        sma_list.append(("SMA200", sma200))
-
-    parts = []
-    score = 0
-    count = 0
-
-    for label, val in sma_list:
-        if _safe(val):
-            val = float(val)
-            count += 1
-            if close > val:
-                score += 1
-                parts.append(f"Price above {label}")
-            else:
-                score -= 1
-                parts.append(f"Price below {label}")
-
-    if count == 0:
-        return None
-
-    score = score / count  # normalise to -1..+1
-    # Amplify if all agree
-    if abs(score) == 1:
-        score *= 1.5
-
-    if score > 0:
-        signal_label = "Buy" if score >= 1 else "Slightly Bullish"
-    elif score < 0:
-        signal_label = "Sell" if score <= -1 else "Slightly Bearish"
-    else:
-        signal_label = "Neutral"
-
-    score = round(score, 2)
-    sma_name = "SMA (20/50)" if is_intraday else "SMA (20/50/200)"
-    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
-    return {
-        "name": sma_name,
-        "value": f"{close:.4f}",
-        "score": score,
-        "signal": signal_label,
-        "explanation": "; ".join(parts),
-        "bet": bet,
-    }
-
 
 def _ema_signal(df: pd.DataFrame) -> Optional[dict]:
     ema12 = df["EMA_12"].iloc[-1]
@@ -326,98 +167,6 @@ def _ema_signal(df: pd.DataFrame) -> Optional[dict]:
     return {"name": "EMA (12/26)", "value": round(diff_pct, 3), "score": score, "signal": label, "explanation": expl, "bet": bet}
 
 
-def _bollinger_signal(df: pd.DataFrame) -> Optional[dict]:
-    close = float(df["Close"].iloc[-1])
-    upper = df["BB_Upper"].iloc[-1]
-    lower = df["BB_Lower"].iloc[-1]
-    middle = df["BB_Middle"].iloc[-1]
-    if not (_safe(upper) and _safe(lower) and _safe(middle)):
-        return None
-    upper, lower, middle = float(upper), float(lower), float(middle)
-    band_width = upper - lower
-    if band_width == 0:
-        return None
-
-    position = (close - lower) / band_width  # 0 = at lower, 1 = at upper
-
-    if position <= 0.05:
-        score, label = 2, "Strong Buy"
-        expl = f"Price at/below lower band ({lower:.4f}) — potential reversal up"
-    elif position <= 0.2:
-        score, label = 1, "Buy"
-        expl = f"Price near lower band — oversold zone"
-    elif position >= 0.95:
-        score, label = -2, "Strong Sell"
-        expl = f"Price at/above upper band ({upper:.4f}) — potential reversal down"
-    elif position >= 0.8:
-        score, label = -1, "Sell"
-        expl = f"Price near upper band — overbought zone"
-    else:
-        score, label = 0, "Neutral"
-        expl = f"Price within bands (position {position:.0%})"
-
-    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
-    return {"name": "Bollinger Bands", "value": round(position * 100, 1), "score": score, "signal": label, "explanation": expl, "bet": bet}
-
-
-# --- Change 2: Stochastic with K/D crossover confirmation ---
-def _stochastic_signal(df: pd.DataFrame, is_intraday: bool = False) -> Optional[dict]:
-    k = df["Stoch_K"].iloc[-1]
-    d = df["Stoch_D"].iloc[-1]
-    if not (_safe(k) and _safe(d)):
-        return None
-    k, d = float(k), float(d)
-
-    # Check for K/D crossover in last 3 bars
-    k_series = df["Stoch_K"].dropna().tail(3)
-    d_series = df["Stoch_D"].dropna().tail(3)
-    has_bullish_cross = False
-    has_bearish_cross = False
-    if len(k_series) >= 2 and len(d_series) >= 2:
-        common_idx = k_series.index.intersection(d_series.index)
-        if len(common_idx) >= 2:
-            k_vals = k_series.loc[common_idx].values
-            d_vals = d_series.loc[common_idx].values
-            for i in range(1, len(k_vals)):
-                if _safe(k_vals[i]) and _safe(d_vals[i]) and _safe(k_vals[i - 1]) and _safe(d_vals[i - 1]):
-                    if k_vals[i] > d_vals[i] and k_vals[i - 1] <= d_vals[i - 1]:
-                        has_bullish_cross = True
-                    elif k_vals[i] < d_vals[i] and k_vals[i - 1] >= d_vals[i - 1]:
-                        has_bearish_cross = True
-
-    if k < 20 and d < 20:
-        base_score = 2 if k < 10 else 1
-        if has_bullish_cross:
-            score = base_score
-            label = "Strong Buy" if score == 2 else "Buy"
-            expl = f"%K={k:.1f}, %D={d:.1f} — oversold with K/D bullish crossover"
-        else:
-            score = 0.5
-            label = "Slightly Bullish"
-            expl = f"%K={k:.1f}, %D={d:.1f} — oversold but no K/D crossover yet"
-    elif k > 80 and d > 80:
-        base_score = -2 if k > 90 else -1
-        if has_bearish_cross:
-            score = base_score
-            label = "Strong Sell" if score == -2 else "Sell"
-            expl = f"%K={k:.1f}, %D={d:.1f} — overbought with K/D bearish crossover"
-        else:
-            score = -0.5
-            label = "Slightly Bearish"
-            expl = f"%K={k:.1f}, %D={d:.1f} — overbought but no K/D crossover yet"
-    elif k > d:
-        score, label = 0.5, "Slightly Bullish"
-        expl = f"%K={k:.1f} > %D={d:.1f} — bullish momentum"
-    elif k < d:
-        score, label = -0.5, "Slightly Bearish"
-        expl = f"%K={k:.1f} < %D={d:.1f} — bearish momentum"
-    else:
-        score, label = 0, "Neutral"
-        expl = f"%K={k:.1f} ≈ %D={d:.1f}"
-
-    stoch_name = "Stochastic (5,3)" if is_intraday else "Stochastic (14,3)"
-    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
-    return {"name": stoch_name, "value": round(k, 2), "score": score, "signal": label, "explanation": expl, "bet": bet}
 
 
 def _adx_signal(df: pd.DataFrame, is_intraday: bool = False) -> Optional[dict]:
@@ -455,261 +204,10 @@ def _adx_signal(df: pd.DataFrame, is_intraday: bool = False) -> Optional[dict]:
     return {"name": adx_name, "value": round(adx_val, 2), "score": score, "signal": label, "explanation": expl, "bet": bet}
 
 
-def _mfi_signal(df: pd.DataFrame) -> Optional[dict]:
-    if "MFI" not in df.columns:
-        return None
-    val = df["MFI"].iloc[-1]
-    if not _safe(val):
-        return None
-    val = round(float(val), 2)
-    if val < 10:
-        score, label, expl = 2, "Strong Buy", f"MFI {val} — deeply oversold (volume-confirmed)"
-    elif val < 20:
-        score, label, expl = 1, "Buy", f"MFI {val} — oversold (volume-confirmed)"
-    elif val > 90:
-        score, label, expl = -2, "Strong Sell", f"MFI {val} — deeply overbought (volume-confirmed)"
-    elif val > 80:
-        score, label, expl = -1, "Sell", f"MFI {val} — overbought (volume-confirmed)"
-    elif val > 65:
-        score, label, expl = -0.5, "Slightly Bearish", f"MFI {val} — leaning overbought"
-    elif val < 35:
-        score, label, expl = 0.5, "Slightly Bullish", f"MFI {val} — leaning oversold"
-    else:
-        score, label, expl = 0, "Neutral", f"MFI {val} — neutral zone"
-    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
-    return {"name": "MFI (14)", "value": val, "score": score, "signal": label, "explanation": expl, "bet": bet}
 
 
-# --- Change 1: OBV with EMA smoothing and 5% threshold ---
-def _obv_signal(df: pd.DataFrame) -> Optional[dict]:
-    if "OBV" not in df.columns:
-        return None
-    obv = df["OBV"].dropna()
-    if len(obv) < 20:
-        return None
-
-    # Smooth OBV with 10-period EMA to reduce single-spike noise
-    obv_ema = obv.ewm(span=10, adjust=False).mean()
-
-    obv_ema_recent = obv_ema.tail(20)
-    close_recent = df["Close"].tail(20)
-
-    obv_change = float(obv_ema_recent.iloc[-1] - obv_ema_recent.iloc[0])
-    price_change = float(close_recent.iloc[-1] - close_recent.iloc[0])
-
-    obv_val = float(obv.iloc[-1])
-
-    # 5% minimum threshold — OBV change must be meaningful relative to its mean
-    obv_mean = float(obv_ema.abs().mean())
-    if obv_mean > 0 and abs(obv_change) / obv_mean < 0.05:
-        score, label = 0, "Neutral"
-        expl = "EMA-smoothed OBV change below 5% threshold — no clear volume signal"
-    elif price_change > 0 and obv_change < 0:
-        score, label = -1, "Sell"
-        expl = "Price rising but smoothed OBV falling — weak rally, distribution"
-    elif price_change < 0 and obv_change > 0:
-        score, label = 1, "Buy"
-        expl = "Price falling but smoothed OBV rising — stealth accumulation"
-    elif price_change > 0 and obv_change > 0:
-        score, label = 0.5, "Slightly Bullish"
-        expl = "Price and smoothed OBV both rising — volume confirms uptrend"
-    elif price_change < 0 and obv_change < 0:
-        score, label = -0.5, "Slightly Bearish"
-        expl = "Price and smoothed OBV both falling — volume confirms downtrend"
-    else:
-        score, label = 0, "Neutral"
-        expl = "Smoothed OBV flat — no clear volume trend"
-
-    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
-    # Display OBV in millions/thousands for readability
-    if abs(obv_val) >= 1e6:
-        display_val = f"{obv_val/1e6:.1f}M"
-    elif abs(obv_val) >= 1e3:
-        display_val = f"{obv_val/1e3:.1f}K"
-    else:
-        display_val = f"{obv_val:.0f}"
-    return {"name": "OBV", "value": display_val, "score": score, "signal": label, "explanation": expl, "bet": bet}
 
 
-def _rsi_divergence_signal(df: pd.DataFrame) -> Optional[dict]:
-    """Detect bullish/bearish RSI divergence via peak/trough detection (30-bar lookback)."""
-    if "RSI" not in df.columns:
-        return None
-    rsi = df["RSI"].dropna()
-    close = df["Close"].dropna()
-    if len(rsi) < 30 or len(close) < 30:
-        return None
-
-    lookback = 30
-    rsi_window = rsi.tail(lookback).values
-    close_window = close.tail(lookback).values
-
-    # Find local troughs (for bullish divergence) and peaks (for bearish divergence)
-    # A trough is a point lower than its neighbours; a peak is higher
-    troughs = []
-    peaks = []
-    for i in range(2, len(rsi_window) - 2):
-        # Trough
-        if (rsi_window[i] < rsi_window[i-1] and rsi_window[i] < rsi_window[i-2] and
-                rsi_window[i] < rsi_window[i+1] and rsi_window[i] < rsi_window[i+2]):
-            troughs.append(i)
-        # Peak
-        if (rsi_window[i] > rsi_window[i-1] and rsi_window[i] > rsi_window[i-2] and
-                rsi_window[i] > rsi_window[i+1] and rsi_window[i] > rsi_window[i+2]):
-            peaks.append(i)
-
-    # Bullish divergence: price makes lower low, RSI makes higher low
-    if len(troughs) >= 2:
-        t1, t2 = troughs[-2], troughs[-1]
-        if close_window[t2] < close_window[t1] and rsi_window[t2] > rsi_window[t1]:
-            score = 1.5
-            label = "Buy"
-            expl = "Bullish RSI divergence — price lower low but RSI higher low (reversal warning)"
-            bet = "UP"
-            return {"name": "RSI Divergence", "value": round(float(rsi_window[t2]), 2),
-                    "score": score, "signal": label, "explanation": expl, "bet": bet}
-
-    # Bearish divergence: price makes higher high, RSI makes lower high
-    if len(peaks) >= 2:
-        p1, p2 = peaks[-2], peaks[-1]
-        if close_window[p2] > close_window[p1] and rsi_window[p2] < rsi_window[p1]:
-            score = -1.5
-            label = "Sell"
-            expl = "Bearish RSI divergence — price higher high but RSI lower high (reversal warning)"
-            bet = "DOWN"
-            return {"name": "RSI Divergence", "value": round(float(rsi_window[p2]), 2),
-                    "score": score, "signal": label, "explanation": expl, "bet": bet}
-
-    # No divergence found
-    return None
-
-
-# --- Change 7: MACD divergence detection ---
-def _macd_divergence_signal(df: pd.DataFrame) -> Optional[dict]:
-    """Detect bullish/bearish MACD histogram divergence (30-bar lookback)."""
-    if "MACD_Hist" not in df.columns:
-        return None
-    hist = df["MACD_Hist"].dropna()
-    close = df["Close"].dropna()
-    if len(hist) < 30 or len(close) < 30:
-        return None
-
-    lookback = 30
-    hist_window = hist.tail(lookback).values
-    close_window = close.tail(lookback).values
-
-    troughs = []
-    peaks = []
-    for i in range(2, len(hist_window) - 2):
-        if (hist_window[i] < hist_window[i - 1] and hist_window[i] < hist_window[i - 2] and
-                hist_window[i] < hist_window[i + 1] and hist_window[i] < hist_window[i + 2]):
-            troughs.append(i)
-        if (hist_window[i] > hist_window[i - 1] and hist_window[i] > hist_window[i - 2] and
-                hist_window[i] > hist_window[i + 1] and hist_window[i] > hist_window[i + 2]):
-            peaks.append(i)
-
-    # Bullish divergence: price lower low, histogram higher low
-    if len(troughs) >= 2:
-        t1, t2 = troughs[-2], troughs[-1]
-        if close_window[t2] < close_window[t1] and hist_window[t2] > hist_window[t1]:
-            return {"name": "MACD Divergence", "value": round(float(hist_window[t2]), 5),
-                    "score": 1.5, "signal": "Buy",
-                    "explanation": "Bullish MACD divergence — price lower low but histogram higher low (reversal warning)",
-                    "bet": "UP"}
-
-    # Bearish divergence: price higher high, histogram lower high
-    if len(peaks) >= 2:
-        p1, p2 = peaks[-2], peaks[-1]
-        if close_window[p2] > close_window[p1] and hist_window[p2] < hist_window[p1]:
-            return {"name": "MACD Divergence", "value": round(float(hist_window[p2]), 5),
-                    "score": -1.5, "signal": "Sell",
-                    "explanation": "Bearish MACD divergence — price higher high but histogram lower high (reversal warning)",
-                    "bet": "DOWN"}
-
-    return None
-
-
-def _psar_signal(df: pd.DataFrame) -> Optional[dict]:
-    if "PSAR" not in df.columns:
-        return None
-    psar_val = df["PSAR"].iloc[-1]
-    close_val = float(df["Close"].iloc[-1])
-    if not _safe(psar_val):
-        return None
-    psar_val = float(psar_val)
-
-    # Check for flip (SAR changed sides) in last 3 bars
-    psar_series = df["PSAR"].dropna().tail(3)
-    close_series = df["Close"].tail(3)
-    flip = False
-    if len(psar_series) >= 2 and len(close_series) >= 2:
-        prev_above = float(psar_series.iloc[-2]) > float(close_series.iloc[-2])
-        curr_above = psar_val > close_val
-        if prev_above != curr_above:
-            flip = True
-
-    if close_val > psar_val:
-        if flip:
-            score, label = 1.5, "Buy"
-            expl = f"SAR flipped bullish — reversal signal (SAR: {psar_val:.4f})"
-        else:
-            score, label = 0.5, "Slightly Bullish"
-            expl = f"Price above SAR ({psar_val:.4f}) — uptrend"
-    else:
-        if flip:
-            score, label = -1.5, "Sell"
-            expl = f"SAR flipped bearish — reversal signal (SAR: {psar_val:.4f})"
-        else:
-            score, label = -0.5, "Slightly Bearish"
-            expl = f"Price below SAR ({psar_val:.4f}) — downtrend"
-
-    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
-    return {"name": "Parabolic SAR", "value": round(psar_val, 5), "score": score, "signal": label, "explanation": expl, "bet": bet}
-
-
-def _cci_signal(df: pd.DataFrame, is_intraday: bool = False) -> Optional[dict]:
-    if "CCI" not in df.columns:
-        return None
-    val = df["CCI"].iloc[-1]
-    if not _safe(val):
-        return None
-    val = round(float(val), 2)
-
-    # Tighter thresholds for intraday (CCI(10) on short bars stays closer to zero)
-    if is_intraday:
-        if val < -150:
-            score, label, expl = 2, "Strong Buy", f"CCI {val} — extreme oversold"
-        elif val < -75:
-            score, label, expl = 1, "Buy", f"CCI {val} — oversold"
-        elif val > 150:
-            score, label, expl = -2, "Strong Sell", f"CCI {val} — extreme overbought"
-        elif val > 75:
-            score, label, expl = -1, "Sell", f"CCI {val} — overbought"
-        elif val > 30:
-            score, label, expl = -0.5, "Slightly Bearish", f"CCI {val} — leaning overbought"
-        elif val < -30:
-            score, label, expl = 0.5, "Slightly Bullish", f"CCI {val} — leaning oversold"
-        else:
-            score, label, expl = 0, "Neutral", f"CCI {val} — neutral zone"
-    else:
-        if val < -200:
-            score, label, expl = 2, "Strong Buy", f"CCI {val} — extreme oversold"
-        elif val < -100:
-            score, label, expl = 1, "Buy", f"CCI {val} — oversold"
-        elif val > 200:
-            score, label, expl = -2, "Strong Sell", f"CCI {val} — extreme overbought"
-        elif val > 100:
-            score, label, expl = -1, "Sell", f"CCI {val} — overbought"
-        elif val > 50:
-            score, label, expl = -0.5, "Slightly Bearish", f"CCI {val} — leaning overbought"
-        elif val < -50:
-            score, label, expl = 0.5, "Slightly Bullish", f"CCI {val} — leaning oversold"
-        else:
-            score, label, expl = 0, "Neutral", f"CCI {val} — neutral zone"
-
-    cci_name = "CCI (10)" if is_intraday else "CCI (20)"
-    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
-    return {"name": cci_name, "value": val, "score": score, "signal": label, "explanation": expl, "bet": bet}
 
 
 def _vwap_signal(df: pd.DataFrame) -> Optional[dict]:
@@ -757,46 +255,29 @@ def _vwap_signal(df: pd.DataFrame) -> Optional[dict]:
 
 INDICATOR_WEIGHTS = {
     "MACD (12,26,9)": 2.0,
-    "RSI (14)": 1.5,
-    "SMA (20/50/200)": 1.5,
-    "ADX (14)": 1.5,
     "EMA (12/26)": 1.0,
-    "Bollinger Bands": 1.0,
-    "Stochastic (14,3)": 1.0,
-    "MFI (14)": 1.5,
-    "OBV": 1.0,
-    "RSI Divergence": 2.0,
-    "MACD Divergence": 2.0,
-    "Parabolic SAR": 1.0,
-    "CCI (20)": 0.75,
+    "ADX (14)": 1.5,
     "VWAP": 1.5,
+    "SMC": 2.0,
 }
 
 # Weights tuned for intraday — emphasise fast oscillators & VWAP,
 # de-emphasise slow trend followers that lose meaning on short bars.
 INTRADAY_WEIGHTS = {
     "MACD (8,17,9)": 2.0,
-    "RSI (14)": 1.5,
-    "SMA (20/50)": 1.0,
-    "ADX (10)": 1.0,
     "EMA (12/26)": 1.5,
-    "Bollinger Bands": 1.5,
-    "Stochastic (5,3)": 1.5,
-    "MFI (14)": 1.5,
-    "OBV": 1.0,
-    "Parabolic SAR": 0.5,
-    "CCI (10)": 1.0,
+    "ADX (10)": 1.0,
     "VWAP": 2.0,
+    "SMC": 2.5,
 }
 
 # Trend-following vs mean-reversion classification for regime adjustment
 _TREND_FOLLOWING = {
-    "MACD (12,26,9)", "MACD (8,17,9)", "EMA (12/26)", "Parabolic SAR",
-    "ADX (14)", "ADX (10)", "SMA (20/50/200)", "SMA (20/50)",
+    "MACD (12,26,9)", "MACD (8,17,9)", "EMA (12/26)",
+    "ADX (14)", "ADX (10)", "SMC",
 }
 _MEAN_REVERSION = {
-    "RSI (14)", "Bollinger Bands", "Stochastic (14,3)", "Stochastic (5,3)",
-    "CCI (20)", "CCI (10)", "MFI (14)", "VWAP",
+    "VWAP",
 }
 
 
@@ -901,6 +382,346 @@ def _compute_sr_context(df: pd.DataFrame) -> dict:
     return {"sr_context": sr_context, "sr_warning": sr_warning}
 
 
+# ---------------------------------------------------------------------------
+# SMC / ICT structure detection
+# ---------------------------------------------------------------------------
+
+def _detect_swings(df: pd.DataFrame, pivot_n: int = 5) -> dict:
+    """Find swing highs and swing lows using N-bar pivot logic."""
+    highs = df["High"].values
+    lows = df["Low"].values
+    swing_highs: list[tuple[int, float]] = []
+    swing_lows: list[tuple[int, float]] = []
+    for i in range(pivot_n, len(df) - pivot_n):
+        if all(highs[i] >= highs[i - j] for j in range(1, pivot_n + 1)) and \
+           all(highs[i] >= highs[i + j] for j in range(1, pivot_n + 1)):
+            swing_highs.append((i, float(highs[i])))
+        if all(lows[i] <= lows[i - j] for j in range(1, pivot_n + 1)) and \
+           all(lows[i] <= lows[i + j] for j in range(1, pivot_n + 1)):
+            swing_lows.append((i, float(lows[i])))
+    return {"swing_highs": swing_highs, "swing_lows": swing_lows}
+
+
+def compute_smc(df: pd.DataFrame, interval: str = "1d") -> dict:
+    """Compute all SMC/ICT structures: FVG, BOS, CHoCH, liquidity sweeps, order blocks."""
+    _intra = interval not in ("1d", "1wk", "1mo")
+    pivot_n = 3 if _intra else 5
+    swings = _detect_swings(df, pivot_n)
+    n_bars = len(df)
+    closes = df["Close"].values
+    highs = df["High"].values
+    lows = df["Low"].values
+    opens = df["Open"].values
+
+    # --- Fair Value Gaps (FVG) ---
+    fvg_list: list[dict] = []
+    for i in range(1, n_bars - 1):
+        # Bullish FVG: candle[i+1].low > candle[i-1].high  (gap up)
+        if lows[i + 1] > highs[i - 1]:
+            fvg_list.append({
+                "type": "bullish",
+                "top": float(lows[i + 1]),
+                "bottom": float(highs[i - 1]),
+                "start_idx": i - 1,
+                "end_idx": i + 1,
+                "filled": False,
+            })
+        # Bearish FVG: candle[i+1].high < candle[i-1].low  (gap down)
+        elif highs[i + 1] < lows[i - 1]:
+            fvg_list.append({
+                "type": "bearish",
+                "top": float(lows[i - 1]),
+                "bottom": float(highs[i + 1]),
+                "start_idx": i - 1,
+                "end_idx": i + 1,
+                "filled": False,
+            })
+
+    # Check if FVGs have been filled by subsequent price action
+    for fvg in fvg_list:
+        for j in range(fvg["end_idx"] + 1, n_bars):
+            if fvg["type"] == "bullish" and lows[j] <= fvg["bottom"]:
+                fvg["filled"] = True
+                break
+            elif fvg["type"] == "bearish" and highs[j] >= fvg["top"]:
+                fvg["filled"] = True
+                break
+
+    fvg_list = fvg_list[-20:]  # keep last 20
+
+    # --- BOS / CHoCH detection ---
+    bos_choch: list[dict] = []
+    sh = swings["swing_highs"]
+    sl = swings["swing_lows"]
+
+    # Determine trend from consecutive swing highs/lows
+    trend = "neutral"  # "up", "down", "neutral"
+    if len(sh) >= 2 and len(sl) >= 2:
+        hh = sh[-1][1] > sh[-2][1]  # higher high
+        hl = sl[-1][1] > sl[-2][1]  # higher low
+        ll = sl[-1][1] < sl[-2][1]  # lower low
+        lh = sh[-1][1] < sh[-2][1]  # lower high
+        if hh and hl:
+            trend = "up"
+        elif ll and lh:
+            trend = "down"
+
+    # Scan for breaks of structure
+    for i in range(n_bars):
+        # Check against recent swing highs
+        for sh_idx, sh_price in sh:
+            if sh_idx >= i:
+                continue
+            if i - sh_idx > 50:
+                continue
+            if highs[i] > sh_price and closes[i] > sh_price:
+                if trend == "up":
+                    bos_choch.append({
+                        "type": "BOS", "direction": "bullish",
+                        "level": sh_price, "bar_index": i,
+                    })
+                elif trend == "down":
+                    bos_choch.append({
+                        "type": "CHoCH", "direction": "bullish",
+                        "level": sh_price, "bar_index": i,
+                    })
+                break  # one event per bar
+
+        # Check against recent swing lows
+        for sl_idx, sl_price in sl:
+            if sl_idx >= i:
+                continue
+            if i - sl_idx > 50:
+                continue
+            if lows[i] < sl_price and closes[i] < sl_price:
+                if trend == "down":
+                    bos_choch.append({
+                        "type": "BOS", "direction": "bearish",
+                        "level": sl_price, "bar_index": i,
+                    })
+                elif trend == "up":
+                    bos_choch.append({
+                        "type": "CHoCH", "direction": "bearish",
+                        "level": sl_price, "bar_index": i,
+                    })
+                break
+
+    # Deduplicate: keep last event per bar_index
+    seen_bars: set[int] = set()
+    deduped: list[dict] = []
+    for evt in reversed(bos_choch):
+        if evt["bar_index"] not in seen_bars:
+            seen_bars.add(evt["bar_index"])
+            deduped.append(evt)
+    bos_choch = list(reversed(deduped))[-5:]
+
+    # --- Liquidity Sweeps ---
+    liquidity_sweeps: list[dict] = []
+    for i in range(1, n_bars):
+        # Check against swing lows from last 50 bars
+        for sl_idx, sl_price in sl:
+            if i - sl_idx > 50 or sl_idx >= i:
+                continue
+            # Bullish sweep: low goes below swing low but close is above it
+            if lows[i] < sl_price and closes[i] > sl_price:
+                liquidity_sweeps.append({
+                    "type": "bullish", "swept_level": sl_price, "bar_index": i,
+                })
+                break
+        # Check against swing highs from last 50 bars
+        for sh_idx, sh_price in sh:
+            if i - sh_idx > 50 or sh_idx >= i:
+                continue
+            # Bearish sweep: high goes above swing high but close is below it
+            if highs[i] > sh_price and closes[i] < sh_price:
+                liquidity_sweeps.append({
+                    "type": "bearish", "swept_level": sh_price, "bar_index": i,
+                })
+                break
+
+    liquidity_sweeps = liquidity_sweeps[-10:]
+
+    # --- Order Blocks ---
+    order_blocks: list[dict] = []
+    for evt in bos_choch:
+        if evt["type"] != "BOS":
+            continue
+        bi = evt["bar_index"]
+        if evt["direction"] == "bullish":
+            # Bullish OB: last bearish candle before the bullish BOS
+            for k in range(bi - 1, max(bi - 10, -1), -1):
+                if k < 0:
+                    break
+                if closes[k] < opens[k]:  # bearish candle
+                    order_blocks.append({
+                        "type": "bullish",
+                        "top": float(highs[k]),
+                        "bottom": float(lows[k]),
+                        "bar_index": k,
+                        "tested": False,
+                    })
+                    break
+        elif evt["direction"] == "bearish":
+            # Bearish OB: last bullish candle before the bearish BOS
+            for k in range(bi - 1, max(bi - 10, -1), -1):
+                if k < 0:
+                    break
+                if closes[k] > opens[k]:  # bullish candle
+                    order_blocks.append({
+                        "type": "bearish",
+                        "top": float(highs[k]),
+                        "bottom": float(lows[k]),
+                        "bar_index": k,
+                        "tested": False,
+                    })
+                    break
+
+    # Check if OBs have been tested (price returned to zone)
+    for ob in order_blocks:
+        for j in range(ob["bar_index"] + 1, n_bars):
+            if lows[j] <= ob["top"] and highs[j] >= ob["bottom"]:
+                ob["tested"] = True
+                break
+
+    order_blocks = order_blocks[-5:]
+
+    # --- Bias ---
+    bias = "neutral"
+    if bos_choch:
+        last_evt = bos_choch[-1]
+        if last_evt["direction"] == "bullish":
+            bias = "bullish"
+        elif last_evt["direction"] == "bearish":
+            bias = "bearish"
+    elif trend == "up":
+        bias = "bullish"
+    elif trend == "down":
+        bias = "bearish"
+
+    return {
+        "fvg": fvg_list,
+        "bos_choch": bos_choch,
+        "liquidity_sweeps": liquidity_sweeps,
+        "order_blocks": order_blocks,
+        "bias": bias,
+    }
+
+
+def _smc_signal(df: pd.DataFrame, smc_data: dict) -> Optional[dict]:
+    """Aggregate SMC structures into a single signal dict."""
+    n_bars = len(df)
+    score = 0.0
+    parts: list[str] = []
+    closes = df["Close"].values
+    last_close = float(closes[-1])
+
+    # BOS / CHoCH (last 5 bars)
+    for evt in smc_data["bos_choch"]:
+        if n_bars - evt["bar_index"] > 5:
+            continue
+        if evt["type"] == "BOS":
+            if evt["direction"] == "bullish":
+                score += 0.75
+                parts.append("Bullish BOS")
+            else:
+                score -= 0.75
+                parts.append("Bearish BOS")
+        elif evt["type"] == "CHoCH":
+            if evt["direction"] == "bullish":
+                score += 1.0
+                parts.append("Bullish CHoCH")
+            else:
+                score -= 1.0
+                parts.append("Bearish CHoCH")
+
+    # Unfilled FVGs — price in/near zone
+    for fvg in smc_data["fvg"]:
+        if fvg["filled"]:
+            continue
+        # Check if current price is within or near the FVG zone
+        zone_height = abs(fvg["top"] - fvg["bottom"])
+        near_margin = zone_height * 0.5
+        if fvg["type"] == "bullish":
+            if fvg["bottom"] - near_margin <= last_close <= fvg["top"] + near_margin:
+                score += 0.5
+                parts.append("Unfilled bullish FVG")
+                break  # only count one
+        elif fvg["type"] == "bearish":
+            if fvg["bottom"] - near_margin <= last_close <= fvg["top"] + near_margin:
+                score -= 0.5
+                parts.append("Unfilled bearish FVG")
+                break
+
+    # Liquidity sweeps (last 3 bars)
+    for ls in smc_data["liquidity_sweeps"]:
+        if n_bars - ls["bar_index"] > 3:
+            continue
+        if ls["type"] == "bullish":
+            score += 0.5
+            parts.append("Bullish liquidity sweep")
+        else:
+            score -= 0.5
+            parts.append("Bearish liquidity sweep")
+
+    # Order blocks — price at OB zone
+    for ob in smc_data["order_blocks"]:
+        if ob["bottom"] <= last_close <= ob["top"]:
+            if ob["type"] == "bullish":
+                score += 0.5
+                parts.append("Bullish OB")
+            else:
+                score -= 0.5
+                parts.append("Bearish OB")
+            break  # only count one
+
+    # Clamp to [-2, +2]
+    score = max(-2.0, min(2.0, score))
+    score = round(score, 2)
+
+    if not parts:
+        expl = "No active SMC structures"
+        label = "Neutral"
+    else:
+        expl = " + ".join(parts)
+        if score >= 1.5:
+            label = "Strong Buy"
+        elif score > 0:
+            label = "Buy" if score >= 0.5 else "Slightly Bullish"
+        elif score <= -1.5:
+            label = "Strong Sell"
+        elif score < 0:
+            label = "Sell" if score <= -0.5 else "Slightly Bearish"
+        else:
+            label = "Neutral"
+
+    bet = "UP" if score > 0 else ("DOWN" if score < 0 else "--")
+    return {
+        "name": "SMC", "value": smc_data["bias"].title(),
+        "score": score, "signal": label, "explanation": expl, "bet": bet,
+    }
+
+
+def _compute_smc_context(smc_data: dict, direction: str) -> float:
+    """Return a multiplier for SMC dampening/reinforcement of the overall score."""
+    bias = smc_data["bias"]
+    if bias == "neutral":
+        return 1.0
+
+    # Check for recent CHoCH (strong reversal signal)
+    has_recent_choch = any(e["type"] == "CHoCH" for e in smc_data["bos_choch"])
+
+    if direction == "UP" and bias == "bearish" and has_recent_choch:
+        return 0.8
+    elif direction == "DOWN" and bias == "bullish" and has_recent_choch:
+        return 0.8
+    elif direction == "UP" and bias == "bullish":
+        return 1.15
+    elif direction == "DOWN" and bias == "bearish":
+        return 1.15
+
+    return 1.0
+
+
 # --- Change 9: Signal quality metric ---
 def _compute_signal_quality(agreement_pct: float, volatility_label: str,
                             is_whipsaw: bool, score_magnitude: float) -> dict:
@@ -987,7 +808,8 @@ def _compute_mtf_context(pair: str, daily_direction: str, interval: str = "1d") 
 # Aggregation
 # ---------------------------------------------------------------------------
 
-def get_indicator_signals(df: pd.DataFrame, interval: str = "1d") -> list[dict]:
+def get_indicator_signals(df: pd.DataFrame, interval: str = "1d",
+                          smc_data: Optional[dict] = None) -> list[dict]:
     """Compute all individual indicator signals."""
     _intra = interval not in ("1d", "1wk", "1mo")
 
@@ -997,23 +819,12 @@ def get_indicator_signals(df: pd.DataFrame, interval: str = "1d") -> list[dict]:
         if result is not None:
             signals.append(result)
 
-    _add(_rsi_signal(df, _intra))
     _add(_macd_signal(df, _intra))
-    _add(_sma_signal(df, _intra))
     _add(_ema_signal(df))
-    _add(_bollinger_signal(df))
-    _add(_stochastic_signal(df, _intra))
     _add(_adx_signal(df, _intra))
-    _add(_mfi_signal(df))
-    _add(_obv_signal(df))
-    # Skip divergence detectors for intraday — 30-bar peak/trough detection
-    # is too noisy on sub-daily bars and produces misleading high-weight signals
-    if not _intra:
-        _add(_rsi_divergence_signal(df))
-        _add(_macd_divergence_signal(df))
-    _add(_psar_signal(df))
-    _add(_cci_signal(df, _intra))
     _add(_vwap_signal(df))
+    if smc_data is not None:
+        _add(_smc_signal(df, smc_data))
 
     return signals
 
@@ -1235,7 +1046,10 @@ def analyze_pair(pair: str, period: str = "6mo", interval: str = "1d") -> Option
     _intra = interval not in ("1d", "1wk", "1mo")
     df = compute_indicators(df, interval)
 
-    signals = get_indicator_signals(df, interval)
+    # --- SMC / ICT structure detection ---
+    smc_data = compute_smc(df, interval)
+
+    signals = get_indicator_signals(df, interval, smc_data=smc_data)
     overall = generate_overall_signal(signals, df, is_intraday=_intra)
 
     # --- MTF confirmation ---
@@ -1279,6 +1093,42 @@ def analyze_pair(pair: str, period: str = "6mo", interval: str = "1d") -> Option
         else:
             overall["direction"] = "NEUTRAL"
 
+    # --- SMC context dampening / reinforcement ---
+    smc_factor = _compute_smc_context(smc_data, overall["direction"])
+    if smc_factor != 1.0:
+        overall["score"] = round(overall["score"] * smc_factor, 3)
+        overall["strength"] = round(abs(overall["score"]) / 2 * 100, 1)
+        s = overall["score"]
+        if _intra:
+            if s >= 1.0:
+                overall["signal"] = "Strong Buy"
+            elif s >= 0.3:
+                overall["signal"] = "Buy"
+            elif s <= -1.0:
+                overall["signal"] = "Strong Sell"
+            elif s <= -0.3:
+                overall["signal"] = "Sell"
+            else:
+                overall["signal"] = "Neutral"
+        else:
+            if s >= 1.5:
+                overall["signal"] = "Strong Buy"
+            elif s >= 0.5:
+                overall["signal"] = "Buy"
+            elif s <= -1.5:
+                overall["signal"] = "Strong Sell"
+            elif s <= -0.5:
+                overall["signal"] = "Sell"
+            else:
+                overall["signal"] = "Neutral"
+        neutral_threshold = 0.15 if _intra else 0.25
+        if s > neutral_threshold:
+            overall["direction"] = "UP"
+        elif s < -neutral_threshold:
+            overall["direction"] = "DOWN"
+        else:
+            overall["direction"] = "NEUTRAL"
+
     # Prepare chart data (OHLC)
     chart_data = []
     for ts, row in df.iterrows():
@@ -1299,31 +1149,40 @@ def analyze_pair(pair: str, period: str = "6mo", interval: str = "1d") -> Option
         return out
 
     overlays = {
-        "sma20": _series("SMA_20"),
-        "sma50": _series("SMA_50"),
-        "sma200": _series("SMA_200"),
         "ema12": _series("EMA_12"),
         "ema26": _series("EMA_26"),
         "ema9": _series("EMA_9"),
         "ema21": _series("EMA_21"),
-        "bb_upper": _series("BB_Upper"),
-        "bb_middle": _series("BB_Middle"),
-        "bb_lower": _series("BB_Lower"),
         "vwap": _series("VWAP") if "VWAP" in df.columns else [],
     }
 
     # Sub-chart data
-    rsi_data = _series("RSI")
     macd_data = _series("MACD")
     macd_signal_data = _series("MACD_Signal")
     macd_hist_data = _series("MACD_Hist")
-    stoch_k_data = _series("Stoch_K")
-    stoch_d_data = _series("Stoch_D")
 
     last_close = round(float(df["Close"].iloc[-1]), 5)
     prev_close = round(float(df["Close"].iloc[-2]), 5) if len(df) > 1 else last_close
     change = round(last_close - prev_close, 5)
     change_pct = round(change / prev_close * 100, 3) if prev_close else 0
+
+    # SMC chart data for frontend rendering
+    smc_chart_data = {
+        "fvg": [{"type": f["type"], "top": f["top"], "bottom": f["bottom"],
+                 "start": int(df.index[f["start_idx"]].timestamp()),
+                 "end": int(df.index[min(f["end_idx"], len(df) - 1)].timestamp()),
+                 "filled": f["filled"]} for f in smc_data["fvg"][-10:]],
+        "bos_choch": [{"type": e["type"], "direction": e["direction"],
+                       "level": e["level"],
+                       "time": int(df.index[e["bar_index"]].timestamp())} for e in smc_data["bos_choch"][-5:]],
+        "order_blocks": [{"type": ob["type"], "top": ob["top"], "bottom": ob["bottom"],
+                          "time": int(df.index[ob["bar_index"]].timestamp()),
+                          "tested": ob["tested"]} for ob in smc_data["order_blocks"][-5:]],
+        "liquidity_sweeps": [{"type": ls["type"],
+                              "level": ls["swept_level"],
+                              "time": int(df.index[ls["bar_index"]].timestamp())} for ls in smc_data["liquidity_sweeps"][-5:]],
+        "bias": smc_data["bias"],
+    }
 
     return {
         "pair": pair,
@@ -1336,11 +1195,9 @@ def analyze_pair(pair: str, period: str = "6mo", interval: str = "1d") -> Option
         "signals": signals,
         "chart": chart_data,
         "overlays": overlays,
-        "rsi": rsi_data,
         "macd": macd_data,
         "macd_signal": macd_signal_data,
         "macd_hist": macd_hist_data,
-        "stoch_k": stoch_k_data,
-        "stoch_d": stoch_d_data,
         "mtf": mtf,
+        "smc": smc_chart_data,
     }

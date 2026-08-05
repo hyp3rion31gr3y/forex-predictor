@@ -5,8 +5,6 @@ let currentInterval = "1d";
 let mainChart = null;
 let candleSeries = null;
 let overlaySeries = {};
-let rsiChart = null;
-let rsiSeries = null;
 let macdChart = null;
 let macdLineSeries = null;
 let macdSignalSeries = null;
@@ -123,11 +121,10 @@ function setupEventListeners() {
     });
 
     // Overlay toggles
-    document.getElementById("ovl-sma").addEventListener("change", updateOverlays);
     document.getElementById("ovl-ema").addEventListener("change", updateOverlays);
     document.getElementById("ovl-ema-fast").addEventListener("change", updateOverlays);
     document.getElementById("ovl-vwap").addEventListener("change", updateOverlays);
-    document.getElementById("ovl-bb").addEventListener("change", updateOverlays);
+    document.getElementById("ovl-smc").addEventListener("change", updateOverlays);
 
     // Sidebar toggle (mobile)
     const toggle = document.getElementById("sidebar-toggle");
@@ -140,7 +137,6 @@ function setupEventListeners() {
     // Window resize
     window.addEventListener("resize", () => {
         if (mainChart) mainChart.applyOptions({ width: document.getElementById("main-chart").clientWidth });
-        if (rsiChart) rsiChart.applyOptions({ width: document.getElementById("rsi-chart").clientWidth });
         if (macdChart) macdChart.applyOptions({ width: document.getElementById("macd-chart").clientWidth });
     });
 }
@@ -185,10 +181,9 @@ async function fetchAnalysis(pair, period, interval) {
 function renderAll(data) {
     renderPriceHeader(data);
     renderCandlestickChart(data);
-    renderRSIChart(data);
     renderMACDChart(data);
     renderOverallGauge(data.overall);
-    renderVerdict(data.overall, data.mtf);
+    renderVerdict(data.overall, data.mtf, data.smc);
     renderSignalTable(data.signals);
 }
 
@@ -229,6 +224,7 @@ function renderCandlestickChart(data) {
 
     // Store overlay data for toggling
     window._overlayData = data.overlays;
+    window._smcData = data.smc || null;
     overlaySeries = {};
     applyOverlays();
 
@@ -246,26 +242,9 @@ function applyOverlays() {
     overlaySeries = {};
 
     const od = window._overlayData;
-    const showSma = document.getElementById("ovl-sma").checked;
     const showEma = document.getElementById("ovl-ema").checked;
     const showEmaFast = document.getElementById("ovl-ema-fast").checked;
     const showVwap = document.getElementById("ovl-vwap").checked;
-    const showBb = document.getElementById("ovl-bb").checked;
-
-    if (showSma) {
-        if (od.sma20 && od.sma20.length) {
-            overlaySeries.sma20 = mainChart.addLineSeries({ color: "#ffb74d", lineWidth: 1, title: "SMA20" });
-            overlaySeries.sma20.setData(od.sma20);
-        }
-        if (od.sma50 && od.sma50.length) {
-            overlaySeries.sma50 = mainChart.addLineSeries({ color: "#4fc3f7", lineWidth: 1, title: "SMA50" });
-            overlaySeries.sma50.setData(od.sma50);
-        }
-        if (od.sma200 && od.sma200.length) {
-            overlaySeries.sma200 = mainChart.addLineSeries({ color: "#ce93d8", lineWidth: 1, title: "SMA200" });
-            overlaySeries.sma200.setData(od.sma200);
-        }
-    }
 
     if (showEma) {
         if (od.ema12 && od.ema12.length) {
@@ -296,53 +275,67 @@ function applyOverlays() {
         }
     }
 
-    if (showBb) {
-        if (od.bb_upper && od.bb_upper.length) {
-            overlaySeries.bb_upper = mainChart.addLineSeries({ color: "#4db6ac", lineWidth: 1, title: "BB Upper", lineStyle: 1 });
-            overlaySeries.bb_upper.setData(od.bb_upper);
+    // --- SMC overlays ---
+    const showSmc = document.getElementById("ovl-smc").checked;
+    const smc = window._smcData;
+    if (showSmc && smc) {
+        // FVG zones — render unfilled FVGs as line pairs
+        smc.fvg.forEach((f, idx) => {
+            if (f.filled) return;
+            const color = f.type === "bullish" ? "#4caf5033" : "#ef535033";
+            const topKey = "smc_fvg_" + idx + "_top";
+            const botKey = "smc_fvg_" + idx + "_bot";
+            overlaySeries[topKey] = mainChart.addLineSeries({ color: color, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
+            overlaySeries[topKey].setData([{ time: f.start, value: f.top }, { time: f.end, value: f.top }]);
+            overlaySeries[botKey] = mainChart.addLineSeries({ color: color, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
+            overlaySeries[botKey].setData([{ time: f.start, value: f.bottom }, { time: f.end, value: f.bottom }]);
+        });
+
+        // Order block zones — line pairs
+        smc.order_blocks.forEach((ob, idx) => {
+            const color = ob.type === "bullish" ? "#29b6f633" : "#ff980033";
+            const topKey = "smc_ob_" + idx + "_top";
+            const botKey = "smc_ob_" + idx + "_bot";
+            overlaySeries[topKey] = mainChart.addLineSeries({ color: color, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
+            overlaySeries[topKey].setData([{ time: ob.time, value: ob.top }]);
+            overlaySeries[botKey] = mainChart.addLineSeries({ color: color, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
+            overlaySeries[botKey].setData([{ time: ob.time, value: ob.bottom }]);
+        });
+
+        // BOS/CHoCH + liquidity sweep markers on candle series
+        const markers = [];
+        smc.bos_choch.forEach((evt) => {
+            const isBullish = evt.direction === "bullish";
+            markers.push({
+                time: evt.time,
+                position: isBullish ? "belowBar" : "aboveBar",
+                color: isBullish ? "#4caf50" : "#ef5350",
+                shape: isBullish ? "arrowUp" : "arrowDown",
+                text: evt.type,
+            });
+        });
+        smc.liquidity_sweeps.forEach((ls) => {
+            const isBullish = ls.type === "bullish";
+            markers.push({
+                time: ls.time,
+                position: isBullish ? "belowBar" : "aboveBar",
+                color: isBullish ? "#4caf50" : "#ef5350",
+                shape: "circle",
+                text: "Sweep",
+            });
+        });
+        if (markers.length > 0) {
+            markers.sort((a, b) => a.time - b.time);
+            candleSeries.setMarkers(markers);
         }
-        if (od.bb_middle && od.bb_middle.length) {
-            overlaySeries.bb_middle = mainChart.addLineSeries({ color: "#4db6ac", lineWidth: 1, title: "BB Mid", lineStyle: 2 });
-            overlaySeries.bb_middle.setData(od.bb_middle);
-        }
-        if (od.bb_lower && od.bb_lower.length) {
-            overlaySeries.bb_lower = mainChart.addLineSeries({ color: "#4db6ac", lineWidth: 1, title: "BB Lower", lineStyle: 1 });
-            overlaySeries.bb_lower.setData(od.bb_lower);
-        }
+    } else {
+        // Clear SMC markers when unchecked
+        if (candleSeries) candleSeries.setMarkers([]);
     }
 }
 
 function updateOverlays() {
     applyOverlays();
-}
-
-// ===== RSI chart =====
-function renderRSIChart(data) {
-    const container = document.getElementById("rsi-chart");
-    container.innerHTML = "";
-
-    rsiChart = LightweightCharts.createChart(container, {
-        ...getChartOptions(),
-        width: container.clientWidth,
-        height: 160,
-    });
-
-    rsiSeries = rsiChart.addLineSeries({ color: "#ce93d8", lineWidth: 1.5 });
-    rsiSeries.setData(data.rsi);
-
-    // Overbought / oversold lines
-    if (data.rsi.length > 0) {
-        const firstTime = data.rsi[0].time;
-        const lastTime = data.rsi[data.rsi.length - 1].time;
-
-        const ob = rsiChart.addLineSeries({ color: "#ef535066", lineWidth: 1, lineStyle: 2 });
-        ob.setData([{ time: firstTime, value: 70 }, { time: lastTime, value: 70 }]);
-
-        const os = rsiChart.addLineSeries({ color: "#4caf5066", lineWidth: 1, lineStyle: 2 });
-        os.setData([{ time: firstTime, value: 30 }, { time: lastTime, value: 30 }]);
-    }
-
-    rsiChart.timeScale().fitContent();
 }
 
 // ===== MACD chart =====
@@ -390,7 +383,7 @@ function renderOverallGauge(overall) {
 }
 
 // ===== Verdict panel =====
-function renderVerdict(overall, mtf) {
+function renderVerdict(overall, mtf, smc) {
     const arrowEl = document.getElementById("verdict-arrow");
     const summaryEl = document.getElementById("verdict-summary");
     const confLabel = document.getElementById("confidence-label");
@@ -486,6 +479,17 @@ function renderVerdict(overall, mtf) {
         mtfEl.style.display = "";
     } else if (mtfEl) {
         mtfEl.style.display = "none";
+    }
+
+    // SMC chip
+    const smcEl = document.getElementById("meta-smc");
+    if (smcEl && smc) {
+        const bias = smc.bias || "neutral";
+        smcEl.textContent = "SMC: " + bias.charAt(0).toUpperCase() + bias.slice(1);
+        smcEl.className = "meta-chip meta-smc-" + bias;
+        smcEl.style.display = "";
+    } else if (smcEl) {
+        smcEl.style.display = "none";
     }
 
     // Signal quality bar

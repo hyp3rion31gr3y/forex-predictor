@@ -44,11 +44,10 @@
             </div>
             <div class="overlay-toggles sidebar-section">
                 <h3>Overlays</h3>
-                <label><input type="checkbox" id="ovl-sma" checked> SMA (20/50/200)</label>
                 <label><input type="checkbox" id="ovl-ema"> EMA (12/26)</label>
                 <label><input type="checkbox" id="ovl-ema-fast"> EMA (9/21)</label>
                 <label><input type="checkbox" id="ovl-vwap"> VWAP</label>
-                <label><input type="checkbox" id="ovl-bb"> Bollinger Bands</label>
+                <label><input type="checkbox" id="ovl-smc"> SMC Zones</label>
             </div>
         </aside>
 
@@ -69,12 +68,8 @@
                 <div id="main-chart"></div>
             </div>
 
-            <!-- Sub-charts: RSI and MACD -->
+            <!-- Sub-charts: MACD -->
             <div id="sub-charts">
-                <div class="sub-chart-wrapper">
-                    <div class="sub-chart-label">RSI (14)</div>
-                    <div id="rsi-chart" class="sub-chart"></div>
-                </div>
                 <div class="sub-chart-wrapper">
                     <div class="sub-chart-label">MACD (12,26,9)</div>
                     <div id="macd-chart" class="sub-chart"></div>
@@ -117,6 +112,7 @@
                         <span id="meta-whipsaw" class="meta-chip" style="display:none"></span>
                         <span id="meta-sr" class="meta-chip" style="display:none"></span>
                         <span id="meta-mtf" class="meta-chip" style="display:none"></span>
+                        <span id="meta-smc" class="meta-chip" style="display:none"></span>
                     </div>
                     <div id="signal-quality">
                         <div id="quality-label"></div>
