@@ -1,6 +1,7 @@
 import math
 import os
 import time
+from threading import Lock
 from typing import Optional
 
 import pandas as pd
@@ -84,6 +85,11 @@ _CACHE_TTLS = {
 # In-memory cache: key -> (timestamp, DataFrame)
 _cache: dict[str, tuple[float, pd.DataFrame]] = {}
 
+# Global rate limiting
+_last_api_call = 0.0
+_api_call_lock = Lock()
+MIN_API_CALL_INTERVAL = 8.0  # 8 seconds between calls (free tier: 8 requests/min)
+
 
 def _compute_outputsize(period: str, interval: str) -> int:
     """Convert a yfinance-style period + interval into Twelve Data outputsize (bar count)."""
@@ -116,22 +122,36 @@ def fetch_forex_data(
             return cached_df.copy()
 
     try:
-        resp = requests.get(
-            TWELVE_DATA_BASE_URL,
-            params={
-                "symbol": symbol,
-                "interval": td_interval,
-                "outputsize": outputsize,
-                "apikey": TWELVE_DATA_API_KEY,
-            },
-            timeout=10,
-        )
+        # Rate limiting: ensure minimum interval between API calls
+        global _last_api_call
+        with _api_call_lock:
+            time_since_last_call = now - _last_api_call
+            if time_since_last_call < MIN_API_CALL_INTERVAL:
+                sleep_time = MIN_API_CALL_INTERVAL - time_since_last_call
+                print(f"Rate limiting: waiting {sleep_time:.1f}s before API call for {pair}")
+                time.sleep(sleep_time)
+
+            _last_api_call = time.time()
+            resp = requests.get(
+                TWELVE_DATA_BASE_URL,
+                params={
+                    "symbol": symbol,
+                    "interval": td_interval,
+                    "outputsize": outputsize,
+                    "apikey": TWELVE_DATA_API_KEY,
+                },
+                timeout=10,
+            )
 
         # Rate limit — serve stale cache if available
         if resp.status_code == 429:
-            print(f"Rate limited fetching {pair}, serving stale cache")
+            print(f"Rate limited fetching {pair}")
             if cache_key in _cache:
-                return _cache[cache_key][1].copy()
+                cached_time, cached_df = _cache[cache_key]
+                age_hours = (now - cached_time) / 3600
+                print(f"Serving stale cache for {pair} (age: {age_hours:.1f}h)")
+                return cached_df.copy()
+            print(f"No stale cache available for {pair}")
             return None
 
         resp.raise_for_status()
