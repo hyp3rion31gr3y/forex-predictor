@@ -124,6 +124,48 @@
                 </div>
             </div>
 
+            <!-- Entry Timing -->
+            <div id="entry-section" style="display:none">
+                <h2>Entry Timing</h2>
+                <div id="entry-card">
+                    <div id="entry-status-row">
+                        <span id="entry-status-badge"></span>
+                        <span id="entry-direction-badge"></span>
+                        <span id="entry-candle-badge" style="display:none"></span>
+                    </div>
+                    <div id="entry-readiness">
+                        <div id="readiness-label"></div>
+                        <div id="readiness-bar-track">
+                            <div id="readiness-bar-fill"></div>
+                        </div>
+                    </div>
+                    <div id="entry-details" style="display:none">
+                        <div class="entry-detail-row">
+                            <span class="entry-label">Entry Price</span>
+                            <span id="entry-price" class="entry-value"></span>
+                        </div>
+                        <div class="entry-detail-row">
+                            <span class="entry-label">Stop Loss</span>
+                            <span id="entry-sl" class="entry-value sl"></span>
+                        </div>
+                        <div class="entry-detail-row">
+                            <span class="entry-label">Take Profit</span>
+                            <span id="entry-tp" class="entry-value tp"></span>
+                        </div>
+                        <div class="entry-detail-row">
+                            <span class="entry-label">Risk : Reward</span>
+                            <span id="entry-rr" class="entry-value"></span>
+                        </div>
+                    </div>
+                    <div id="entry-factors">
+                        <div class="entry-factors-title">Readiness Factors</div>
+                        <div id="entry-factors-list"></div>
+                    </div>
+                    <div id="entry-summary"></div>
+                    <div id="entry-disclaimer">Entry timing is rule-based and not a guarantee. Always use proper risk management.</div>
+                </div>
+            </div>
+
             <!-- Signal table -->
             <div id="signal-section">
                 <h2>Indicator Signals</h2>

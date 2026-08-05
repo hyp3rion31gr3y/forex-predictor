@@ -9,6 +9,7 @@ let macdChart = null;
 let macdLineSeries = null;
 let macdSignalSeries = null;
 let macdHistSeries = null;
+let entryPriceLines = {};
 
 // Interval -> allowed periods + default period
 const INTERVAL_PERIODS = {
@@ -184,6 +185,7 @@ function renderAll(data) {
     renderMACDChart(data);
     renderOverallGauge(data.overall);
     renderVerdict(data.overall, data.mtf, data.smc);
+    renderEntryTiming(data.entry, data.overall);
     renderSignalTable(data.signals);
 }
 
@@ -221,6 +223,9 @@ function renderCandlestickChart(data) {
         wickDownColor: "#ef5350",
     });
     candleSeries.setData(data.chart);
+
+    // Reset entry price lines (chart recreated)
+    entryPriceLines = {};
 
     // Store overlay data for toggling
     window._overlayData = data.overlays;
@@ -524,6 +529,163 @@ function renderSignalTable(signals) {
         `;
         tbody.appendChild(tr);
     }
+}
+
+// ===== Entry Timing =====
+function clearEntryLines() {
+    if (!candleSeries) return;
+    for (const key of Object.keys(entryPriceLines)) {
+        try { candleSeries.removePriceLine(entryPriceLines[key]); } catch(e) {}
+    }
+    entryPriceLines = {};
+}
+
+function drawEntryLines(entry) {
+    clearEntryLines();
+    if (!candleSeries) return;
+    if (!entry || (entry.status !== "READY" && entry.status !== "WAIT")) return;
+
+    if (entry.entry_price != null) {
+        entryPriceLines.entry = candleSeries.createPriceLine({
+            price: entry.entry_price,
+            color: "#42a5f5",
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: "Entry",
+        });
+    }
+    if (entry.stop_loss != null) {
+        entryPriceLines.sl = candleSeries.createPriceLine({
+            price: entry.stop_loss,
+            color: "#ef5350",
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: "SL",
+        });
+    }
+    if (entry.take_profit != null) {
+        entryPriceLines.tp = candleSeries.createPriceLine({
+            price: entry.take_profit,
+            color: "#4caf50",
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: "TP",
+        });
+    }
+
+    // Draw top 3 zone boundaries as faint lines
+    if (entry.zones && entry.zones.length > 0) {
+        const zoneSlice = entry.zones.slice(0, 3);
+        zoneSlice.forEach((z, i) => {
+            const color = z.direction === "BUY" ? "rgba(76,175,80,0.3)" : "rgba(239,83,80,0.3)";
+            entryPriceLines["zone_top_" + i] = candleSeries.createPriceLine({
+                price: z.top,
+                color: color,
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dotted,
+                axisLabelVisible: false,
+                title: "",
+            });
+            entryPriceLines["zone_bot_" + i] = candleSeries.createPriceLine({
+                price: z.bottom,
+                color: color,
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dotted,
+                axisLabelVisible: false,
+                title: "",
+            });
+        });
+    }
+}
+
+function renderEntryTiming(entry, overall) {
+    const section = document.getElementById("entry-section");
+    if (!entry) {
+        section.style.display = "none";
+        clearEntryLines();
+        return;
+    }
+    section.style.display = "";
+
+    // Status badge
+    const statusBadge = document.getElementById("entry-status-badge");
+    statusBadge.textContent = entry.status.replace("_", " ");
+    if (entry.status === "READY") {
+        statusBadge.className = "entry-ready";
+    } else if (entry.status === "WAIT") {
+        statusBadge.className = "entry-wait";
+    } else {
+        statusBadge.className = "entry-not-recommended";
+    }
+
+    // Direction badge
+    const dirBadge = document.getElementById("entry-direction-badge");
+    if (entry.direction) {
+        dirBadge.textContent = entry.direction;
+        dirBadge.className = entry.direction === "BUY" ? "entry-buy" : "entry-sell";
+        dirBadge.style.display = "";
+    } else {
+        dirBadge.style.display = "none";
+    }
+
+    // Candle pattern badge
+    const candleBadge = document.getElementById("entry-candle-badge");
+    if (entry.candle_pattern) {
+        candleBadge.textContent = entry.candle_pattern;
+        candleBadge.style.display = "";
+    } else {
+        candleBadge.style.display = "none";
+    }
+
+    // Readiness bar
+    const score = entry.readiness_score || 0;
+    document.getElementById("readiness-label").textContent = "Readiness: " + score + "%";
+    const fill = document.getElementById("readiness-bar-fill");
+    fill.style.width = score + "%";
+    if (score >= 65) {
+        fill.className = "readiness-high";
+    } else if (score >= 35) {
+        fill.className = "readiness-mid";
+    } else {
+        fill.className = "readiness-low";
+    }
+
+    // Detail rows
+    const detailsDiv = document.getElementById("entry-details");
+    if (entry.entry_price != null) {
+        detailsDiv.style.display = "";
+        document.getElementById("entry-price").textContent = entry.entry_price;
+        document.getElementById("entry-sl").textContent = entry.stop_loss != null ? entry.stop_loss : "--";
+        document.getElementById("entry-tp").textContent = entry.take_profit != null ? entry.take_profit : "--";
+        document.getElementById("entry-rr").textContent = entry.risk_reward != null ? ("1 : " + entry.risk_reward) : "--";
+    } else {
+        detailsDiv.style.display = "none";
+    }
+
+    // Factors
+    const factorsList = document.getElementById("entry-factors-list");
+    factorsList.innerHTML = "";
+    if (entry.factors && entry.factors.length > 0) {
+        for (const f of entry.factors) {
+            const pct = f.max > 0 ? (f.score / f.max * 100) : 0;
+            const row = document.createElement("div");
+            row.className = "entry-factor-row";
+            row.innerHTML =
+                '<span class="entry-factor-name">' + f.name + '</span>' +
+                '<div class="entry-factor-bar-track"><div class="entry-factor-bar-fill" style="width:' + pct + '%"></div></div>' +
+                '<span class="entry-factor-score">' + f.score + '/' + f.max + '</span>';
+            factorsList.appendChild(row);
+        }
+    }
+
+    // Summary
+    document.getElementById("entry-summary").textContent = entry.summary || "";
+
+    // Draw chart lines
+    drawEntryLines(entry);
 }
 
 // ===== Helpers =====

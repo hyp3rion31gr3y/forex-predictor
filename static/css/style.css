@@ -373,6 +373,163 @@ body {
     margin-top: 4px;
 }
 
+/* ===== Entry Timing Panel ===== */
+#entry-section {
+    background: #16213e;
+    border: 1px solid #1e3a5f;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+#entry-section h2 { font-size: 1rem; color: #78909c; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+#entry-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+#entry-status-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+#entry-status-badge {
+    padding: 6px 18px;
+    border-radius: 16px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+#entry-status-badge.entry-ready { background: #1b5e20; color: #66bb6a; border: 1px solid #4caf50; }
+#entry-status-badge.entry-wait { background: #3e2723; color: #ffb74d; border: 1px solid #ff9800; }
+#entry-status-badge.entry-not-recommended { background: #3a1a1a; color: #e57373; border: 1px solid #ef5350; }
+#entry-direction-badge {
+    padding: 6px 14px;
+    border-radius: 16px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    border: 1px solid #2a2a4e;
+    background: #1a1a2e;
+    color: #90a4ae;
+}
+#entry-direction-badge.entry-buy { border-color: #4caf50; color: #66bb6a; }
+#entry-direction-badge.entry-sell { border-color: #ef5350; color: #e57373; }
+#entry-candle-badge {
+    padding: 6px 14px;
+    border-radius: 16px;
+    font-weight: 600;
+    font-size: 0.8rem;
+    border: 1px solid #4fc3f7;
+    background: #1a1a2e;
+    color: #4fc3f7;
+}
+#entry-readiness {
+    width: 100%;
+    max-width: 400px;
+}
+#readiness-label {
+    font-size: 0.8rem;
+    color: #90a4ae;
+    margin-bottom: 4px;
+    text-align: center;
+}
+#readiness-bar-track {
+    width: 100%;
+    height: 10px;
+    background: #1a1a2e;
+    border-radius: 5px;
+    overflow: hidden;
+}
+#readiness-bar-fill {
+    height: 100%;
+    border-radius: 5px;
+    transition: width 0.5s ease, background 0.5s ease;
+}
+#readiness-bar-fill.readiness-high { background: #4caf50; }
+#readiness-bar-fill.readiness-mid { background: #ff9800; }
+#readiness-bar-fill.readiness-low { background: #ef5350; }
+
+#entry-details {
+    width: 100%;
+    max-width: 400px;
+}
+.entry-detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #1e2d3d;
+}
+.entry-label {
+    font-size: 0.85rem;
+    color: #78909c;
+}
+.entry-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #e0e0e0;
+}
+.entry-value.sl { color: #ef5350; }
+.entry-value.tp { color: #4caf50; }
+
+#entry-factors {
+    width: 100%;
+    max-width: 400px;
+}
+.entry-factors-title {
+    font-size: 0.8rem;
+    color: #78909c;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    text-align: center;
+}
+.entry-factor-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.entry-factor-name {
+    font-size: 0.78rem;
+    color: #90a4ae;
+    min-width: 110px;
+}
+.entry-factor-bar-track {
+    flex: 1;
+    height: 6px;
+    background: #1a1a2e;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.entry-factor-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #4fc3f7;
+    transition: width 0.4s ease;
+}
+.entry-factor-score {
+    font-size: 0.75rem;
+    color: #78909c;
+    min-width: 40px;
+    text-align: right;
+}
+
+#entry-summary {
+    font-size: 0.9rem;
+    color: #b0bec5;
+    text-align: center;
+    line-height: 1.4;
+}
+#entry-disclaimer {
+    font-size: 0.75rem;
+    color: #546e7a;
+    font-style: italic;
+    text-align: center;
+    margin-top: 4px;
+}
+
 /* ===== Bet Cell in Signal Table ===== */
 .bet-cell {
     font-weight: 700;

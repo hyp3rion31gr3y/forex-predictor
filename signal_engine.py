@@ -1034,6 +1034,367 @@ def generate_overall_signal(signals: list[dict], df: pd.DataFrame = None,
 
 
 # ---------------------------------------------------------------------------
+# Entry Timing Prediction
+# ---------------------------------------------------------------------------
+
+def _detect_candle_pattern(df: pd.DataFrame, idx: int = -1) -> dict:
+    """Detect pin bars and engulfing candles at a given bar index."""
+    if len(df) < 2:
+        return {"pattern": None, "strength": 0.0}
+
+    row = df.iloc[idx]
+    o, h, l, c = float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"])
+    body = abs(c - o)
+    total_range = h - l
+    if total_range == 0:
+        return {"pattern": None, "strength": 0.0}
+
+    upper_wick = h - max(o, c)
+    lower_wick = min(o, c) - l
+
+    # Pin bar (bullish): lower wick > 2x body AND > 60% of total range
+    if lower_wick > 2 * body and lower_wick > 0.6 * total_range:
+        strength = min(1.0, lower_wick / total_range)
+        return {"pattern": "bullish_pin_bar", "strength": round(strength, 2)}
+
+    # Pin bar (bearish): upper wick > 2x body AND > 60% of total range
+    if upper_wick > 2 * body and upper_wick > 0.6 * total_range:
+        strength = min(1.0, upper_wick / total_range)
+        return {"pattern": "bearish_pin_bar", "strength": round(strength, 2)}
+
+    # Engulfing patterns — need previous candle
+    prev_idx = idx - 1 if idx >= 0 else idx - 1
+    if abs(prev_idx) > len(df):
+        return {"pattern": None, "strength": 0.0}
+
+    prev = df.iloc[prev_idx]
+    po, pc = float(prev["Open"]), float(prev["Close"])
+    prev_body = abs(pc - po)
+
+    # Bullish engulfing: prev bearish, current bullish, current body engulfs prev body
+    if pc < po and c > o and o <= pc and c >= po and body > prev_body:
+        strength = min(1.0, body / (prev_body + 0.0001) * 0.5)
+        return {"pattern": "bullish_engulfing", "strength": round(strength, 2)}
+
+    # Bearish engulfing: prev bullish, current bearish, current body engulfs prev body
+    if pc > po and c < o and o >= pc and c <= po and body > prev_body:
+        strength = min(1.0, body / (prev_body + 0.0001) * 0.5)
+        return {"pattern": "bearish_engulfing", "strength": round(strength, 2)}
+
+    return {"pattern": None, "strength": 0.0}
+
+
+def _find_entry_zones(df: pd.DataFrame, smc_data: dict, interval: str) -> list[dict]:
+    """Identify entry zones from existing SMC structures and indicator levels."""
+    zones: list[dict] = []
+    close = float(df["Close"].iloc[-1])
+    atr_val = float(df["ATR"].iloc[-1]) if "ATR" in df.columns and _safe(df["ATR"].iloc[-1]) else 0
+    if atr_val == 0:
+        return zones
+    max_dist = 2.0 * atr_val  # only zones within 2x ATR of current price
+
+    # 1. Unfilled FVGs
+    for fvg in smc_data.get("fvg", []):
+        if fvg["filled"]:
+            continue
+        mid = (fvg["top"] + fvg["bottom"]) / 2
+        if abs(close - mid) > max_dist:
+            continue
+        direction = "BUY" if fvg["type"] == "bullish" else "SELL"
+        proximity = 1.0 - min(1.0, abs(close - mid) / max_dist)
+        zones.append({
+            "zone_type": "FVG",
+            "direction": direction,
+            "price_top": fvg["top"],
+            "price_bottom": fvg["bottom"],
+            "relevance": round(proximity * 0.9, 2),
+        })
+
+    # 2. Order Blocks
+    for ob in smc_data.get("order_blocks", []):
+        mid = (ob["top"] + ob["bottom"]) / 2
+        if abs(close - mid) > max_dist:
+            continue
+        direction = "BUY" if ob["type"] == "bullish" else "SELL"
+        proximity = 1.0 - min(1.0, abs(close - mid) / max_dist)
+        tested_bonus = 0.1 if not ob.get("tested", False) else 0.0
+        zones.append({
+            "zone_type": "Order Block",
+            "direction": direction,
+            "price_top": ob["top"],
+            "price_bottom": ob["bottom"],
+            "relevance": round(min(1.0, proximity * 0.85 + tested_bonus), 2),
+        })
+
+    # 3. EMA pullback — price within 0.5 ATR of EMA_9/21 or EMA_12/26
+    ema_threshold = 0.5 * atr_val
+    for ema_col, label in [("EMA_9", "EMA9"), ("EMA_21", "EMA21"),
+                           ("EMA_12", "EMA12"), ("EMA_26", "EMA26")]:
+        if ema_col not in df.columns:
+            continue
+        ema_val = df[ema_col].iloc[-1]
+        if not _safe(ema_val):
+            continue
+        ema_val = float(ema_val)
+        dist = abs(close - ema_val)
+        if dist <= ema_threshold:
+            direction = "BUY" if close >= ema_val else "SELL"
+            proximity = 1.0 - dist / ema_threshold
+            zones.append({
+                "zone_type": f"{label} Pullback",
+                "direction": direction,
+                "price_top": ema_val + atr_val * 0.1,
+                "price_bottom": ema_val - atr_val * 0.1,
+                "relevance": round(proximity * 0.7, 2),
+            })
+            break  # only count best EMA pullback
+
+    # 4. VWAP reversion (intraday only)
+    _intra = interval not in ("1d", "1wk", "1mo")
+    if _intra and "VWAP" in df.columns:
+        vwap_val = df["VWAP"].iloc[-1]
+        if _safe(vwap_val):
+            vwap_val = float(vwap_val)
+            dist = abs(close - vwap_val)
+            if dist <= ema_threshold:
+                direction = "BUY" if close >= vwap_val else "SELL"
+                proximity = 1.0 - dist / ema_threshold
+                zones.append({
+                    "zone_type": "VWAP Reversion",
+                    "direction": direction,
+                    "price_top": vwap_val + atr_val * 0.1,
+                    "price_bottom": vwap_val - atr_val * 0.1,
+                    "relevance": round(proximity * 0.75, 2),
+                })
+
+    # 5. Liquidity sweeps (last 3 bars)
+    n_bars = len(df)
+    for ls in smc_data.get("liquidity_sweeps", []):
+        if n_bars - ls["bar_index"] > 3:
+            continue
+        direction = "BUY" if ls["type"] == "bullish" else "SELL"
+        level = ls["swept_level"]
+        zones.append({
+            "zone_type": "Liquidity Sweep",
+            "direction": direction,
+            "price_top": level + atr_val * 0.2,
+            "price_bottom": level - atr_val * 0.2,
+            "relevance": 0.85,
+        })
+
+    # Sort by relevance descending
+    zones.sort(key=lambda z: z["relevance"], reverse=True)
+    return zones
+
+
+def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
+                         overall: dict, interval: str) -> dict:
+    """Compute entry timing prediction based on indicator data and SMC structures."""
+    _intra = interval not in ("1d", "1wk", "1mo")
+
+    # 1. If NEUTRAL → not recommended
+    if overall.get("direction") == "NEUTRAL":
+        return {
+            "status": "NOT_RECOMMENDED",
+            "readiness_score": 0,
+            "direction": None,
+            "entry_price": None,
+            "stop_loss": None,
+            "take_profit": None,
+            "risk_reward": None,
+            "zones": [],
+            "candle_pattern": None,
+            "factors": [],
+            "summary": "No clear directional bias — entry not recommended.",
+        }
+
+    # 2. Map direction
+    direction = "BUY" if overall["direction"] == "UP" else "SELL"
+
+    # 3. Find entry zones matching direction
+    all_zones = _find_entry_zones(df, smc_data, interval)
+    matching_zones = [z for z in all_zones if z["direction"] == direction]
+
+    # 4. Candle pattern
+    candle = _detect_candle_pattern(df)
+    pattern_matches = False
+    if candle["pattern"]:
+        if direction == "BUY" and candle["pattern"].startswith("bullish"):
+            pattern_matches = True
+        elif direction == "SELL" and candle["pattern"].startswith("bearish"):
+            pattern_matches = True
+
+    # 5. Compute readiness score from 5 factors
+    factors = []
+
+    # Factor 1: Zone proximity (30 pts)
+    zone_score = 0
+    if matching_zones:
+        zone_score = matching_zones[0]["relevance"] * 30
+    factors.append({
+        "name": "Zone Proximity",
+        "score": round(zone_score, 1),
+        "max": 30,
+        "detail": f"{len(matching_zones)} zone(s) found" if matching_zones else "No matching zones",
+    })
+
+    # Factor 2: Candle confirmation (20 pts)
+    candle_score = 0
+    if pattern_matches:
+        candle_score = candle["strength"] * 20
+    factors.append({
+        "name": "Candle Confirmation",
+        "score": round(candle_score, 1),
+        "max": 20,
+        "detail": candle["pattern"].replace("_", " ").title() if candle["pattern"] else "No pattern",
+    })
+
+    # Factor 3: Indicator alignment (25 pts)
+    agreement_pct = overall.get("agreement_pct", 0)
+    alignment_score = agreement_pct / 100 * 25
+    factors.append({
+        "name": "Indicator Alignment",
+        "score": round(alignment_score, 1),
+        "max": 25,
+        "detail": f"{agreement_pct}% agreement",
+    })
+
+    # Factor 4: Volatility suitability (10 pts)
+    vol_label = overall.get("volatility", "Normal")
+    vol_scores = {"Normal": 10, "High": 7, "Low": 6, "Very Low": 4, "Very High": 3}
+    vol_score = vol_scores.get(vol_label, 5)
+    factors.append({
+        "name": "Volatility",
+        "score": vol_score,
+        "max": 10,
+        "detail": f"{vol_label} volatility",
+    })
+
+    # Factor 5: Trend regime (15 pts)
+    regime = overall.get("trend_regime", "Unknown")
+    if regime == "Trending":
+        regime_score = 15
+    elif regime == "Ranging":
+        regime_score = 7
+    else:
+        regime_score = 5
+    factors.append({
+        "name": "Trend Regime",
+        "score": regime_score,
+        "max": 15,
+        "detail": f"{regime} market",
+    })
+
+    readiness_score = round(sum(f["score"] for f in factors))
+    readiness_score = max(0, min(100, readiness_score))
+
+    # 6. Status
+    if readiness_score >= 65:
+        status = "READY"
+    elif readiness_score >= 35:
+        status = "WAIT"
+    else:
+        status = "NOT_RECOMMENDED"
+
+    # 7. Entry/SL/TP calculation (only if READY or WAIT)
+    entry_price = None
+    stop_loss = None
+    take_profit = None
+    risk_reward = None
+
+    if status in ("READY", "WAIT"):
+        close = float(df["Close"].iloc[-1])
+        atr_val = float(df["ATR"].iloc[-1]) if "ATR" in df.columns and _safe(df["ATR"].iloc[-1]) else 0
+
+        # Entry: zone midpoint if near a zone, else current close
+        if matching_zones:
+            best_zone = matching_zones[0]
+            zone_mid = (best_zone["price_top"] + best_zone["price_bottom"]) / 2
+            if atr_val > 0 and abs(close - zone_mid) < 0.5 * atr_val:
+                entry_price = round(zone_mid, 5)
+            else:
+                entry_price = round(close, 5)
+        else:
+            entry_price = round(close, 5)
+
+        # SL: recent swing low/high + 0.5 ATR buffer
+        _intra_pivot = 3 if _intra else 5
+        swings = _detect_swings(df, _intra_pivot)
+        if atr_val > 0:
+            atr_buffer = 0.5 * atr_val
+        else:
+            atr_buffer = 0
+
+        if direction == "BUY":
+            # SL below recent swing low
+            if swings["swing_lows"]:
+                recent_sl = swings["swing_lows"][-1][1]
+                stop_loss = round(recent_sl - atr_buffer, 5)
+            else:
+                # Fallback: 1.5 ATR below entry
+                stop_loss = round(entry_price - 1.5 * atr_val, 5) if atr_val > 0 else None
+        else:
+            # SL above recent swing high
+            if swings["swing_highs"]:
+                recent_sh = swings["swing_highs"][-1][1]
+                stop_loss = round(recent_sh + atr_buffer, 5)
+            else:
+                stop_loss = round(entry_price + 1.5 * atr_val, 5) if atr_val > 0 else None
+
+        # TP: min 2:1 R:R, capped at 3:1
+        if stop_loss is not None:
+            risk = abs(entry_price - stop_loss)
+            if risk > 0:
+                if direction == "BUY":
+                    take_profit = round(entry_price + risk * 2.5, 5)
+                    # Cap at 3:1
+                    max_tp = entry_price + risk * 3.0
+                    take_profit = round(min(take_profit, max_tp), 5)
+                else:
+                    take_profit = round(entry_price - risk * 2.5, 5)
+                    max_tp = entry_price - risk * 3.0
+                    take_profit = round(max(take_profit, max_tp), 5)
+                risk_reward = round(abs(take_profit - entry_price) / risk, 2)
+
+    # 8. Build zones for chart (top 5)
+    chart_zones = []
+    for z in all_zones[:5]:
+        chart_zones.append({
+            "type": z["zone_type"],
+            "direction": z["direction"],
+            "top": round(z["price_top"], 5),
+            "bottom": round(z["price_bottom"], 5),
+            "relevance": z["relevance"],
+        })
+
+    # 9. Summary string
+    if status == "READY":
+        summary = f"{direction} entry conditions met (score {readiness_score}/100). "
+        if entry_price and stop_loss and take_profit:
+            summary += f"Entry ~{entry_price}, SL {stop_loss}, TP {take_profit} (R:R {risk_reward})."
+    elif status == "WAIT":
+        summary = f"{direction} bias confirmed but entry not ideal (score {readiness_score}/100). Wait for better setup."
+    else:
+        summary = "Conditions do not favor entry. Stand aside."
+
+    candle_name = candle["pattern"].replace("_", " ").title() if candle["pattern"] else None
+
+    return {
+        "status": status,
+        "readiness_score": readiness_score,
+        "direction": direction,
+        "entry_price": entry_price,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "risk_reward": risk_reward,
+        "zones": chart_zones,
+        "candle_pattern": candle_name,
+        "factors": factors,
+        "summary": summary,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1129,6 +1490,9 @@ def analyze_pair(pair: str, period: str = "6mo", interval: str = "1d") -> Option
         else:
             overall["direction"] = "NEUTRAL"
 
+    # --- Entry timing prediction ---
+    entry_timing = compute_entry_timing(df, smc_data, overall, interval)
+
     # Prepare chart data (OHLC)
     chart_data = []
     for ts, row in df.iterrows():
@@ -1200,4 +1564,5 @@ def analyze_pair(pair: str, period: str = "6mo", interval: str = "1d") -> Option
         "macd_hist": macd_hist_data,
         "mtf": mtf,
         "smc": smc_chart_data,
+        "entry": entry_timing,
     }
