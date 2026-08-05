@@ -1153,6 +1153,13 @@ def _compute_mtf_bias_vote(pair: str) -> dict:
 # Entry Timing Prediction
 # ---------------------------------------------------------------------------
 
+def _pip_size(pair: str) -> float:
+    """Return pip size for a currency pair (0.01 for JPY pairs, 0.0001 otherwise)."""
+    if "JPY" in pair.upper():
+        return 0.01
+    return 0.0001
+
+
 def _detect_candle_pattern(df: pd.DataFrame, idx: int = -1) -> dict:
     """Detect pin bars and engulfing candles at a given bar index."""
     if len(df) < 2:
@@ -1305,7 +1312,7 @@ def _find_entry_zones(df: pd.DataFrame, smc_data: dict, interval: str) -> list[d
 
 def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
                          overall: dict, interval: str,
-                         mtf_bias: dict = None) -> dict:
+                         mtf_bias: dict = None, pair: str = "") -> dict:
     """Compute entry timing prediction based on indicator data and SMC structures."""
     _intra = interval not in ("1d", "1wk", "1mo")
 
@@ -1444,6 +1451,7 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
     stop_loss = None
     take_profit = None
     risk_reward = None
+    summary_override = None
 
     if status in ("READY", "WAIT"):
         close = float(df["Close"].iloc[-1])
@@ -1483,6 +1491,23 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
                 stop_loss = round(recent_sh + atr_buffer, 5)
             else:
                 stop_loss = round(entry_price + 1.5 * atr_val, 5) if atr_val > 0 else None
+
+        # Enforce minimum SL distance (8 pips)
+        if stop_loss is not None:
+            pip = _pip_size(pair)
+            min_sl_pips = 8
+            max_sl_pips = 15
+            min_sl_dist = min_sl_pips * pip
+            max_sl_dist = max_sl_pips * pip
+
+            sl_dist = abs(entry_price - stop_loss)
+
+            if sl_dist < min_sl_dist:
+                if direction == "BUY":
+                    stop_loss = round(entry_price - min_sl_dist, 5)
+                else:
+                    stop_loss = round(entry_price + min_sl_dist, 5)
+                sl_dist = min_sl_dist
 
         # TP: 1st — nearest liquidity / POI in trade direction
         #     2nd — fallback to 2x risk distance
@@ -1544,6 +1569,25 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
 
                 risk_reward = round(abs(take_profit - entry_price) / risk, 2)
 
+        # If SL exceeds max_sl_pips, verify TP gives at least 1:1 R:R
+        if stop_loss is not None and sl_dist > max_sl_dist:
+            if take_profit is None:
+                status = "NOT_RECOMMENDED"
+                entry_price = None
+                stop_loss = None
+                take_profit = None
+                risk_reward = None
+                summary_override = "SL too wide (>{} pips) with no valid TP target. Stand aside.".format(max_sl_pips)
+            else:
+                tp_dist = abs(take_profit - entry_price)
+                if tp_dist < sl_dist:  # less than 1:1
+                    status = "NOT_RECOMMENDED"
+                    entry_price = None
+                    stop_loss = None
+                    take_profit = None
+                    risk_reward = None
+                    summary_override = "SL too wide (>{} pips) and TP cannot achieve 1:1 R:R. Stand aside.".format(max_sl_pips)
+
     # 8. Build zones for chart (top 5)
     chart_zones = []
     for z in all_zones[:5]:
@@ -1556,7 +1600,9 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
         })
 
     # 9. Summary string
-    if status == "READY":
+    if summary_override:
+        summary = summary_override
+    elif status == "READY":
         summary = f"{direction} entry conditions met (score {readiness_score}/100). "
         if entry_price and stop_loss and take_profit:
             summary += f"Entry ~{entry_price}, SL {stop_loss}, TP {take_profit} (R:R {risk_reward})."
@@ -1685,7 +1731,7 @@ def analyze_pair(pair: str, period: str = "6mo", interval: str = "1d") -> Option
     mtf_bias = _compute_mtf_bias_vote(pair)
 
     # --- Entry timing prediction ---
-    entry_timing = compute_entry_timing(df, smc_data, overall, interval, mtf_bias=mtf_bias)
+    entry_timing = compute_entry_timing(df, smc_data, overall, interval, mtf_bias=mtf_bias, pair=pair)
 
     # Prepare chart data (OHLC)
     chart_data = []
