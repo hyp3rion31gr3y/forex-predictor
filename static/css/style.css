@@ -516,6 +516,46 @@ body {
     text-align: right;
 }
 
+/* MTF Bias Vote */
+#entry-mtf-vote {
+    width: 100%;
+    max-width: 400px;
+}
+.mtf-vote-title {
+    font-size: 0.8rem;
+    color: #78909c;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    text-align: center;
+}
+#mtf-vote-chips {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+.mtf-vote-chip {
+    padding: 5px 14px;
+    border-radius: 14px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    border: 1px solid #2a2a4e;
+    background: #1a1a2e;
+    color: #90a4ae;
+}
+.mtf-vote-chip.mtf-vote-up { border-color: #4caf50; color: #66bb6a; background: #1a3a1a; }
+.mtf-vote-chip.mtf-vote-down { border-color: #ef5350; color: #e57373; background: #3a1a1a; }
+.mtf-vote-chip.mtf-vote-neutral { border-color: #78909c; color: #90a4ae; background: #1a1a2e; }
+#mtf-vote-summary {
+    font-size: 0.8rem;
+    color: #90a4ae;
+    text-align: center;
+    font-style: italic;
+}
+
 #entry-summary {
     font-size: 0.9rem;
     color: #b0bec5;

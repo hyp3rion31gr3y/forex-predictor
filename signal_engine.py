@@ -1034,6 +1034,122 @@ def generate_overall_signal(signals: list[dict], df: pd.DataFrame = None,
 
 
 # ---------------------------------------------------------------------------
+# Multi-Timeframe Bias Voting
+# ---------------------------------------------------------------------------
+
+def _resample_to_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
+    """Resample 1-hour OHLC data to 4-hour bars."""
+    ohlc_map = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+    }
+    if "Volume" in df_1h.columns:
+        ohlc_map["Volume"] = "sum"
+    df_4h = df_1h.resample("4h").agg(ohlc_map).dropna()
+    return df_4h
+
+
+def _analyze_single_tf(pair: str, period: str, interval: str,
+                        df_override: pd.DataFrame = None) -> dict:
+    """Run the full indicator pipeline on one timeframe and return direction info."""
+    try:
+        if df_override is not None:
+            df = df_override.copy()
+        else:
+            df = fetch_forex_data(pair, period, interval)
+        if df is None or len(df) < 20:
+            return {"direction": "NEUTRAL", "score": 0.0, "success": False}
+
+        df = compute_indicators(df, interval)
+        smc_data = compute_smc(df, interval)
+        _intra = interval not in ("1d", "1wk", "1mo")
+        signals = get_indicator_signals(df, interval, smc_data=smc_data)
+        overall = generate_overall_signal(signals, df, is_intraday=_intra)
+
+        return {
+            "direction": overall.get("direction", "NEUTRAL"),
+            "score": overall.get("score", 0.0),
+            "success": True,
+        }
+    except Exception:
+        return {"direction": "NEUTRAL", "score": 0.0, "success": False}
+
+
+def _compute_mtf_bias_vote(pair: str) -> dict:
+    """Orchestrate a 3-timeframe (Daily, 4H, 1H) majority vote for direction bias."""
+    # 1. Daily analysis
+    daily = _analyze_single_tf(pair, "6mo", "1d")
+
+    # 2. Fetch 1H data (also used for 4H resampling)
+    df_1h = fetch_forex_data(pair, "60d", "1h")
+
+    # 3. 1H analysis
+    h1 = _analyze_single_tf(pair, "60d", "1h", df_override=df_1h)
+
+    # 4. 4H analysis via resampling
+    if df_1h is not None and len(df_1h) >= 20:
+        df_4h = _resample_to_4h(df_1h)
+        h4 = _analyze_single_tf(pair, "60d", "4h", df_override=df_4h)
+    else:
+        h4 = {"direction": "NEUTRAL", "score": 0.0, "success": False}
+
+    # 5. Build vote map
+    def _dir_label(d):
+        if d == "UP":
+            return "UP"
+        elif d == "DOWN":
+            return "DOWN"
+        return "NEUTRAL"
+
+    votes = {
+        "1d": {
+            "direction": _dir_label(daily["direction"]),
+            "score": daily["score"],
+            "label": "Daily",
+        },
+        "4h": {
+            "direction": _dir_label(h4["direction"]),
+            "score": h4["score"],
+            "label": "4H",
+        },
+        "1h": {
+            "direction": _dir_label(h1["direction"]),
+            "score": h1["score"],
+            "label": "1H",
+        },
+    }
+
+    up_count = sum(1 for v in votes.values() if v["direction"] == "UP")
+    down_count = sum(1 for v in votes.values() if v["direction"] == "DOWN")
+
+    if up_count >= 2:
+        direction = "UP"
+        agreement = up_count
+    elif down_count >= 2:
+        direction = "DOWN"
+        agreement = down_count
+    else:
+        direction = None
+        agreement = 1
+
+    if direction == "UP":
+        summary = f"{agreement}/3 timeframes agree: Bullish bias"
+    elif direction == "DOWN":
+        summary = f"{agreement}/3 timeframes agree: Bearish bias"
+    else:
+        summary = "No consensus across timeframes — entry not recommended"
+
+    return {
+        "direction": direction,
+        "agreement": agreement,
+        "votes": votes,
+        "summary": summary,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Entry Timing Prediction
 # ---------------------------------------------------------------------------
 
@@ -1188,13 +1304,37 @@ def _find_entry_zones(df: pd.DataFrame, smc_data: dict, interval: str) -> list[d
 
 
 def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
-                         overall: dict, interval: str) -> dict:
+                         overall: dict, interval: str,
+                         mtf_bias: dict = None) -> dict:
     """Compute entry timing prediction based on indicator data and SMC structures."""
     _intra = interval not in ("1d", "1wk", "1mo")
 
-    # 1. If NEUTRAL → not recommended
-    if overall.get("direction") == "NEUTRAL":
+    # 1. MTF bias vote override: if provided and no consensus → NOT_RECOMMENDED
+    if mtf_bias is not None and mtf_bias.get("direction") is None:
         return {
+            "status": "NOT_RECOMMENDED",
+            "readiness_score": 0,
+            "direction": None,
+            "entry_price": None,
+            "stop_loss": None,
+            "take_profit": None,
+            "risk_reward": None,
+            "zones": [],
+            "candle_pattern": None,
+            "factors": [],
+            "summary": "No consensus across timeframes — entry not recommended.",
+            "mtf_bias_vote": mtf_bias,
+        }
+
+    # Determine effective direction: MTF bias overrides single-TF direction
+    if mtf_bias is not None and mtf_bias.get("direction") is not None:
+        effective_direction = mtf_bias["direction"]
+    else:
+        effective_direction = overall.get("direction")
+
+    # 1b. If NEUTRAL → not recommended
+    if effective_direction == "NEUTRAL":
+        result = {
             "status": "NOT_RECOMMENDED",
             "readiness_score": 0,
             "direction": None,
@@ -1207,9 +1347,12 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
             "factors": [],
             "summary": "No clear directional bias — entry not recommended.",
         }
+        if mtf_bias is not None:
+            result["mtf_bias_vote"] = mtf_bias
+        return result
 
     # 2. Map direction
-    direction = "BUY" if overall["direction"] == "UP" else "SELL"
+    direction = "BUY" if effective_direction == "UP" else "SELL"
 
     # 3. Find entry zones matching direction
     all_zones = _find_entry_zones(df, smc_data, interval)
@@ -1424,7 +1567,7 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
 
     candle_name = candle["pattern"].replace("_", " ").title() if candle["pattern"] else None
 
-    return {
+    result = {
         "status": status,
         "readiness_score": readiness_score,
         "direction": direction,
@@ -1437,6 +1580,9 @@ def compute_entry_timing(df: pd.DataFrame, smc_data: dict,
         "factors": factors,
         "summary": summary,
     }
+    if mtf_bias is not None:
+        result["mtf_bias_vote"] = mtf_bias
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1535,8 +1681,11 @@ def analyze_pair(pair: str, period: str = "6mo", interval: str = "1d") -> Option
         else:
             overall["direction"] = "NEUTRAL"
 
+    # --- Multi-timeframe bias vote ---
+    mtf_bias = _compute_mtf_bias_vote(pair)
+
     # --- Entry timing prediction ---
-    entry_timing = compute_entry_timing(df, smc_data, overall, interval)
+    entry_timing = compute_entry_timing(df, smc_data, overall, interval, mtf_bias=mtf_bias)
 
     # Prepare chart data (OHLC)
     chart_data = []

@@ -681,6 +681,32 @@ function renderEntryTiming(entry, overall) {
         }
     }
 
+    // MTF bias vote chips
+    const mtfVoteDiv = document.getElementById("entry-mtf-vote");
+    const mtfChipsDiv = document.getElementById("mtf-vote-chips");
+    const mtfSummaryDiv = document.getElementById("mtf-vote-summary");
+    if (entry.mtf_bias_vote && entry.mtf_bias_vote.votes) {
+        mtfVoteDiv.style.display = "";
+        mtfChipsDiv.innerHTML = "";
+        const tfOrder = ["1d", "4h", "1h"];
+        for (const tf of tfOrder) {
+            const v = entry.mtf_bias_vote.votes[tf];
+            if (!v) continue;
+            const chip = document.createElement("span");
+            const dir = v.direction || "NEUTRAL";
+            const dirLower = dir.toLowerCase();
+            let arrow = "\u2014";
+            if (dir === "UP") arrow = "\u25B2";
+            else if (dir === "DOWN") arrow = "\u25BC";
+            chip.className = "mtf-vote-chip mtf-vote-" + dirLower;
+            chip.textContent = v.label + " " + arrow + " " + dir;
+            mtfChipsDiv.appendChild(chip);
+        }
+        mtfSummaryDiv.textContent = entry.mtf_bias_vote.summary || "";
+    } else {
+        mtfVoteDiv.style.display = "none";
+    }
+
     // Summary
     document.getElementById("entry-summary").textContent = entry.summary || "";
 
