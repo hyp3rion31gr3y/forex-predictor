@@ -151,11 +151,7 @@ function setupEventListeners() {
     // Live toggle
     document.getElementById("live-toggle").addEventListener("change", (e) => {
         liveRefreshEnabled = e.target.checked;
-        if (liveRefreshEnabled) {
-            startLiveRefresh();
-        } else {
-            stopLiveRefresh();
-        }
+        startLiveRefresh();
     });
 
     // Window resize
@@ -195,9 +191,7 @@ async function fetchAnalysis(pair, period, interval) {
         }
         const data = await resp.json();
         renderAll(data);
-        if (liveRefreshEnabled) {
-            startLiveRefresh();
-        }
+        startLiveRefresh();
     } catch (e) {
         console.error(e);
         document.getElementById("error-text").textContent = e.message;
@@ -764,10 +758,14 @@ function signalToClass(signal) {
 
 function startLiveRefresh() {
     stopLiveRefresh();
-    const rate = POLL_INTERVALS[currentInterval] || 60000;
     const badge = document.getElementById("live-badge");
-    badge.style.display = "";
-    liveRefreshTimer = setInterval(liveRefreshTick, rate);
+    if (liveRefreshEnabled) {
+        badge.style.display = "";
+        liveRefreshTimer = setInterval(liveRefreshTick, POLL_INTERVALS[currentInterval] || 60000);
+    } else {
+        badge.style.display = "none";
+        liveRefreshTimer = setInterval(liveRefreshTick, 300000);
+    }
 }
 
 function stopLiveRefresh() {
@@ -777,8 +775,6 @@ function stopLiveRefresh() {
     }
     consecutiveErrors = 0;
     isLiveRefreshing = false;
-    const badge = document.getElementById("live-badge");
-    if (badge) badge.style.display = "none";
     hideLiveErrorToast();
 }
 
@@ -787,7 +783,7 @@ async function liveRefreshTick() {
     isLiveRefreshing = true;
 
     const badge = document.getElementById("live-badge");
-    badge.classList.add("fetching");
+    if (liveRefreshEnabled) badge.classList.add("fetching");
 
     const urlPair = currentPair.replace("/", "-");
     try {
@@ -804,7 +800,7 @@ async function liveRefreshTick() {
             showLiveErrorToast();
         }
     } finally {
-        badge.classList.remove("fetching");
+        if (liveRefreshEnabled) badge.classList.remove("fetching");
         isLiveRefreshing = false;
     }
 }
