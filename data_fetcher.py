@@ -20,6 +20,9 @@ CURRENCY_PAIRS = {
         "NZD/USD": "NZDUSD=X",
         "USD/CAD": "USDCAD=X",
     },
+    "Commodities": {
+        "XAU/USD": "GC=F",
+    },
 }
 
 # Flatten for quick lookup: "USD/INR" -> "USDINR=X"

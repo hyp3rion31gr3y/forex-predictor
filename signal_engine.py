@@ -1154,8 +1154,16 @@ def _compute_mtf_bias_vote(pair: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _pip_size(pair: str) -> float:
-    """Return pip size for a currency pair (0.01 for JPY pairs, 0.0001 otherwise)."""
-    if "JPY" in pair.upper():
+    """Return pip size for a currency pair / commodity.
+
+    JPY pairs: 1 pip = 0.01
+    XAU (gold): 1 pip = 0.10
+    All others: 1 pip = 0.0001
+    """
+    upper = pair.upper()
+    if "XAU" in upper:
+        return 0.10
+    if "JPY" in upper:
         return 0.01
     return 0.0001
 
